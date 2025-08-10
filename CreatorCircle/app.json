@@ -1,0 +1,90 @@
+{
+  "expo": {
+    "name": "CreatorCircle",
+    "slug": "creatorcircle",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "scheme": "creatorcircle",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.creatorcircle.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app uses location to show you nearby creators who match your skills and interests.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "We use your location in the background to continuously share your live location with nearby creators when you enable the toggle.",
+        "UIBackgroundModes": ["location", "processing"]
+      },
+      "config": {
+        "googleMapsApiKey": "AIzaSyDOlbmrY6IEQx_8i85-yQkcc6soodtKaF8",
+        "googleSignIn": {
+          "reservedClientId": "com.googleusercontent.apps.YOUR_IOS_CLIENT_ID"
+        }
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.creatorcircle.app",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION"
+      ],
+      "usesCleartextTraffic": true,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCyEI1VjRC3SZ1ZvyoPWAfCIeux5Yksksk"
+        },
+        "googleSignIn": {
+          "apiKey": "YOUR_ANDROID_API_KEY",
+          "certificateHash": "YOUR_SHA1_CERTIFICATE_HASH"
+        }
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you share them with your friends."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "This app uses location to show you nearby creators who match your skills and interests.",
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.YOUR_IOS_CLIENT_ID"
+        }
+      ]
+    ],
+    "scheme": "creatorcircle",
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      }
+    }
+  }
+}

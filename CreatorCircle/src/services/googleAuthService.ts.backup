@@ -1,0 +1,84 @@
+import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
+import { auth } from '../config/firebase';
+import * as WebBrowser from 'expo-web-browser';
+
+WebBrowser.maybeCompleteAuthSession();
+
+const GOOGLE_CLIENT_ID = '267385690331-j7j3gq3lkuk0ks9spvhp6qaott54009p.apps.googleusercontent.com';
+
+export class GoogleAuthService {
+  static async signInWithGoogle() {
+    try {
+      console.log('Starting Google Sign-in...');
+      
+      // Create the redirect URI
+      const redirectUri = 'https://auth.expo.io/@yasmanthvemala007/creatorcircle';
+      
+      // Open Google Sign-in in a web browser
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${GOOGLE_CLIENT_ID}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `response_type=code&` +
+        `scope=openid%20profile%20email&` +
+        `access_type=offline`;
+      
+      console.log('Opening Google Sign-in...');
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
+
+      console.log('Web browser result:', result);
+
+      if (result.type === 'success' && result.url) {
+        // Extract the authorization code from the URL
+        const url = new URL(result.url);
+        const code = url.searchParams.get('code');
+        
+        if (code) {
+          console.log('Got authorization code, exchanging for tokens...');
+          
+          // Exchange code for tokens
+          const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              code,
+              client_id: GOOGLE_CLIENT_ID,
+              redirect_uri: redirectUri,
+              grant_type: 'authorization_code',
+            }),
+          });
+
+          if (!tokenResponse.ok) {
+            const errorText = await tokenResponse.text();
+            console.error('Token exchange failed:', errorText);
+            throw new Error(`Token exchange failed: ${tokenResponse.status}`);
+          }
+
+          const tokens = await tokenResponse.json();
+          console.log('Got tokens:', tokens);
+
+          if (tokens.id_token) {
+            // Create credential and sign in
+            const credential = GoogleAuthProvider.credential(tokens.id_token);
+            const authResult = await signInWithCredential(auth, credential);
+            
+            console.log('Firebase auth successful:', authResult.user.email);
+            return authResult.user;
+          } else {
+            throw new Error('No ID token received from Google');
+          }
+        } else {
+          throw new Error('No authorization code received');
+        }
+      } else if (result.type === 'cancel') {
+        throw new Error('Google sign-in was cancelled by user');
+      } else {
+        throw new Error('Google sign-in failed');
+      }
+    } catch (error) {
+      console.error('Google sign-in error:', error);
+      throw error;
+    }
+  }
+} 
