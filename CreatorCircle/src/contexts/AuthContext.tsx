@@ -24,6 +24,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
+      // Stop background sharing and remove user location if logged in
+      const current = auth.currentUser;
+      if (current?.uid) {
+        try {
+          const { locationService } = await import('../services/locationService');
+          await locationService.disableSharing(current.uid);
+        } catch (e) {
+          console.warn('Failed to stop location sharing on logout:', e);
+        }
+      }
       await signOut(auth);
     } catch (error) {
       console.error('Error signing out:', error);

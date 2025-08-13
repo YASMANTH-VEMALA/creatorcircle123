@@ -12,12 +12,13 @@ const RoomsListScreen: React.FC = () => {
   const [roomIdInput, setRoomIdInput] = useState('');
   const [pendingPrivateRoom, setPendingPrivateRoom] = useState<Room | null>(null);
   const [joinKeyInput, setJoinKeyInput] = useState('');
+  const [, forceTick] = useState(0);
 
   useEffect(() => {
-    if (!user?.uid) return;
-    const unsub = roomService.subscribeToMyRooms(user.uid, setRooms);
-    return () => unsub();
-  }, [user?.uid]);
+    const unsub = roomService.subscribeToAllRooms(setRooms);
+    const t = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => { unsub(); clearInterval(t); };
+  }, []);
 
   const handleJoin = async () => {
     const id = roomIdInput.trim().toUpperCase();
@@ -40,6 +41,17 @@ const RoomsListScreen: React.FC = () => {
     }
   };
 
+  function remainingText(item: Room): string | null {
+    if (!item.isTemporary || !(item as any).endsAt) return null;
+    const endsAtMs = (item as any).endsAt?.toMillis?.() || (item as any).endsAt;
+    if (!endsAtMs) return null;
+    const diff = Math.max(0, endsAtMs - Date.now());
+    const hh = Math.floor(diff / 3600000);
+    const mm = Math.floor((diff % 3600000) / 60000);
+    const ss = Math.floor((diff % 60000) / 1000);
+    return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`;
+  }
+
   const renderItem = ({ item }: { item: Room }) => (
     <TouchableOpacity style={styles.roomItem} onPress={() => navigation.navigate('RoomChat' as never, { roomId: item.id, roomName: item.name } as never)}>
       {item.logoUrl ? (
@@ -50,7 +62,15 @@ const RoomsListScreen: React.FC = () => {
         </View>
       )}
       <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         <Text style={styles.roomName}>{item.name}</Text>
+          {item.isTemporary && (
+            <View style={styles.tempBadge}>
+              <Ionicons name="time-outline" size={12} color="#fff" />
+              <Text style={styles.tempBadgeText}>{remainingText(item) || 'Expired'}</Text>
+            </View>
+          )}
+        </View>
         <Text style={styles.roomMeta}>{item.isPrivate ? 'Private' : 'Public'} • {item.membersCount || 0} members</Text>
       </View>
       <Ionicons name="chevron-forward" size={20} color="#999" />
@@ -85,7 +105,7 @@ const RoomsListScreen: React.FC = () => {
         keyExtractor={(r) => r.id}
         renderItem={renderItem}
         contentContainerStyle={{ padding: 16 }}
-        ListEmptyComponent={<Text style={styles.empty}>You haven't joined any rooms yet.</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>No rooms available.</Text>}
       />
 
       {pendingPrivateRoom && (
@@ -147,6 +167,8 @@ const styles = StyleSheet.create({
   joinKeyLabel: { fontSize: 13, color: '#555', marginBottom: 6 },
   joinKeyRow: { flexDirection: 'row', alignItems: 'center' },
   joinKeyInput: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginRight: 10, backgroundColor: '#fafafa' },
+  tempBadge: { marginLeft: 8, backgroundColor: '#ff6b6b', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
+  tempBadgeText: { marginLeft: 4, color: '#fff', fontSize: 10, fontWeight: '700' },
 });
 
 export default RoomsListScreen; 

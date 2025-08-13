@@ -27,6 +27,7 @@ import SuggestedPeopleScreen from '../screens/SuggestedPeopleScreen';
 import NearbyCreatorsScreen from '../screens/NearbyCreatorsScreen';
 import { RootStackParamList } from '../types';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
+import LocationSettingsScreen from '../screens/LocationSettingsScreen';
 
 const Stack = createStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -78,6 +79,7 @@ const AppNavigator = () => {
               <Stack.Screen name="SuggestedPeople" component={SuggestedPeopleScreen} />
               <Stack.Screen name="NearbyCreators" component={NearbyCreatorsScreen} />
               <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
+              <Stack.Screen name="LocationSettings" component={LocationSettingsScreen} />
               <Stack.Screen name="RoomsList" component={require('../screens/RoomsListScreen').default} />
               <Stack.Screen name="CreateRoom" component={require('../screens/CreateRoomScreen').default} />
               <Stack.Screen name="RoomChat" component={require('../screens/RoomChatScreen').default} />

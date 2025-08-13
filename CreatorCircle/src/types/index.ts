@@ -5,6 +5,21 @@ export interface User {
   photoURL?: string;
 }
 
+export type SocialPlatform =
+  | 'youtube'
+  | 'instagram'
+  | 'linkedin'
+  | 'twitter'
+  | 'facebook'
+  | 'github'
+  | 'tiktok'
+  | 'website';
+
+export interface SocialLink {
+  platform: SocialPlatform;
+  url: string;
+}
+
 export interface Profile {
   uid: string;
   email: string;
@@ -26,6 +41,7 @@ export interface Profile {
   createdAt: Date;
   updatedAt: Date;
   pushToken?: string;
+  socialLinks?: SocialLink[];
   // XP system fields
   xp?: number;
   level?: number;
@@ -180,6 +196,7 @@ export type RootStackParamList = {
   RoomsList: undefined;
   CreateRoom: undefined;
   RoomChat: { roomId: string; roomName?: string };
+  LocationSettings: undefined;
 };
 
 export interface Room {

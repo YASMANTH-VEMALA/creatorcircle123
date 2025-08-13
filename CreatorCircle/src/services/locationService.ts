@@ -32,12 +32,13 @@ const STORAGE_KEYS = {
   backgroundContext: 'cc.location.backgroundContext',
 };
 
-// Define background task exactly once at module load
+// Define background task only once (guard for fast refresh)
+if (!TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async (body: TaskManager.TaskManagerTaskBody) => {
   try {
     const { data, error } = (body || {}) as any;
     if (error) {
-      console.error('Background location task error:', error);
+        console.warn('Background location task warning:', error);
       return;
     }
     const { locations } = (data || {}) as any;
@@ -54,9 +55,10 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async (body: TaskManager.TaskMa
     };
     await locationService.updateUserLocation(ctx.userId, ctx.userData, update);
   } catch (e) {
-    console.error('Background task handler failed:', e);
+      console.warn('Background task handler failed:', e);
   }
 });
+}
 
 class LocationService {
   private locationSubscription: Location.LocationSubscription | null = null;
@@ -307,9 +309,7 @@ class LocationService {
     onLocationUpdate?: (location: LocationUpdate) => void
   ): Promise<void> {
     await this.setSharingEnabled(true);
-    // Start background updates
-    await this.startBackgroundUpdates(userId, userData);
-    // Also start a foreground watcher for immediate UI updates
+    // Foreground-only tracking (no background updates)
     await this.startLocationTracking(userId, userData, onLocationUpdate);
   }
 

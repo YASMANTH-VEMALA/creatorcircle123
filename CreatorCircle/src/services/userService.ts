@@ -64,6 +64,9 @@ export class UserService {
         // Clean up image URLs to handle local file paths
         let profilePhotoUrl = data.profilePhotoUrl || '';
         let bannerPhotoUrl = data.bannerPhotoUrl || '';
+         if (!bannerPhotoUrl) {
+           bannerPhotoUrl = ProfileImageService.getDefaultImageUrl('banner');
+         }
         
         // Check if URLs are local file paths and replace with default Firebase Storage URLs
         if (ProfileImageService.isLocalFile(profilePhotoUrl)) {
@@ -97,6 +100,7 @@ export class UserService {
           createdAt: data.createdAt?.toDate() || new Date(),
           updatedAt: data.updatedAt?.toDate() || new Date(),
           pushToken: data.pushToken || '',
+          socialLinks: Array.isArray(data.socialLinks) ? data.socialLinks : [],
           // XP fields
           xp: data.xp ?? 0,
           level: data.level ?? 1,

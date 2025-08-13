@@ -5,6 +5,8 @@ import { Platform } from 'react-native';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { UserService } from './src/services/userService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { locationService } from './src/services/locationService';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -99,6 +101,52 @@ const PushRegistration: React.FC = () => {
       if (subscription) {
         Notifications.removeNotificationSubscription(subscription);
       }
+    };
+  }, [user?.uid]);
+
+  return null;
+};
+
+const LocationSharingBootstrap: React.FC = () => {
+  const { user } = useAuth();
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const bootstrap = async () => {
+      try {
+        if (!user?.uid) return;
+
+        const saved = await AsyncStorage.getItem('cc.location.sharingEnabled');
+        const enabled = saved ? JSON.parse(saved) : false;
+        if (!enabled) return;
+
+        // Only auto-resume if permissions are already granted to avoid prompting on launch
+        const fgGranted = await locationService.checkLocationPermission();
+        const bgGranted = await locationService.checkBackgroundPermission();
+        if (!fgGranted || !bgGranted) return;
+
+        const profile = await UserService.getUserProfile(user.uid);
+        if (!profile || isCancelled) return;
+
+        await locationService.startBackgroundUpdates(user.uid, {
+          displayName: profile.name || user.email || 'Unknown',
+          college: profile.college || 'Unknown',
+          skills: profile.skills || [],
+          interests: profile.interests || [],
+          verified: profile.isVerified || false,
+          photoURL: profile.profilePhotoUrl || undefined,
+        });
+        console.log('Background location sharing resumed on app launch');
+      } catch (e) {
+        console.warn('Location bootstrap failed:', e);
+      }
+    };
+
+    bootstrap();
+
+    return () => {
+      isCancelled = true;
     };
   }, [user?.uid]);
 

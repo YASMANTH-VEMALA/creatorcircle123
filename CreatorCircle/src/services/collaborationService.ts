@@ -19,6 +19,10 @@ export interface ChatMessage {
   message: string;
   timestamp: Timestamp;
   read: boolean;
+  isEdited?: boolean;
+  editedAt?: Timestamp;
+  isDeleted?: boolean;
+  deletedAt?: Timestamp;
 }
 
 class CollaborationService {
@@ -213,6 +217,8 @@ class CollaborationService {
         message,
         timestamp: Timestamp.now(),
         read: false,
+        isEdited: false,
+        isDeleted: false,
       };
 
       await setDoc(messageRef, chatMessage);
@@ -237,6 +243,39 @@ class CollaborationService {
       console.error('Error sending chat message:', error);
       throw error;
     }
+  }
+
+  /**
+   * Edit an existing chat message (sender only)
+   */
+  async editChatMessage(messageId: string, editorId: string, newText: string): Promise<void> {
+    const ref = doc(db, 'chatMessages', messageId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('Message not found');
+    const data = snap.data() as ChatMessage;
+    if (data.senderId !== editorId) throw new Error('Only the sender can edit this message');
+    if (data.isDeleted) throw new Error('Cannot edit a deleted message');
+    await updateDoc(ref, {
+      message: newText,
+      isEdited: true,
+      editedAt: serverTimestamp(),
+    });
+  }
+
+  /**
+   * Delete a chat message for both users (soft delete)
+   */
+  async deleteChatMessage(messageId: string, requesterId: string): Promise<void> {
+    const ref = doc(db, 'chatMessages', messageId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    const data = snap.data() as ChatMessage;
+    if (data.senderId !== requesterId) throw new Error('Only the sender can delete this message');
+    await updateDoc(ref, {
+      message: 'This message has been deleted',
+      isDeleted: true,
+      deletedAt: serverTimestamp(),
+    });
   }
 
   /**
@@ -272,6 +311,10 @@ class CollaborationService {
               message: data.message,
               timestamp: data.timestamp,
               read: data.read || false,
+              isEdited: !!data.isEdited,
+              editedAt: data.editedAt,
+              isDeleted: !!data.isDeleted,
+              deletedAt: data.deletedAt,
             } as ChatMessage);
           }
           });

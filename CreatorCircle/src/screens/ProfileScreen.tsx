@@ -11,6 +11,7 @@ import {
   Dimensions,
   FlatList,
   TextInput,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -19,7 +20,7 @@ import { UserService } from '../services/userService';
 import { PostService } from '../services/postService';
 import { ProfileValidationService, ProfileCompletionStatus } from '../services/profileValidationService';
 import { ProfileImageService } from '../services/profileImageService';
-import { Profile, Post } from '../types';
+import { Profile, Post, SocialLink, SocialPlatform } from '../types';
 import { auth } from '../config/firebase';
 import { signOut } from 'firebase/auth';
 import PostCard from '../components/PostCard';
@@ -71,6 +72,39 @@ function getNextLevelXp(level: number): number {
   return getLevelStart(level) + 2000;
 }
 
+function detectPlatform(url: string): SocialPlatform {
+  const u = url.toLowerCase();
+  if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
+  if (u.includes('instagram.com')) return 'instagram';
+  if (u.includes('linkedin.com')) return 'linkedin';
+  if (u.includes('twitter.com') || u.includes('x.com')) return 'twitter';
+  if (u.includes('facebook.com')) return 'facebook';
+  if (u.includes('github.com')) return 'github';
+  if (u.includes('tiktok.com')) return 'tiktok';
+  return 'website';
+}
+
+function platformIconName(platform: SocialPlatform): keyof typeof Ionicons.glyphMap {
+  switch (platform) {
+    case 'youtube':
+      return 'logo-youtube';
+    case 'instagram':
+      return 'logo-instagram';
+    case 'linkedin':
+      return 'logo-linkedin';
+    case 'twitter':
+      return 'logo-twitter';
+    case 'facebook':
+      return 'logo-facebook';
+    case 'github':
+      return 'logo-github';
+    case 'tiktok':
+      return 'logo-tiktok';
+    default:
+      return 'link-outline';
+  }
+}
+
 const ProfileScreen: React.FC = () => {
   const { user } = useAuth();
   const { notifyScroll } = useScroll();
@@ -109,6 +143,7 @@ const ProfileScreen: React.FC = () => {
   // XP state
   const [xpLogs, setXpLogs] = useState<XpLogEntry[]>([]);
   const [showXpLog, setShowXpLog] = useState(false);
+  const [newSocialUrl, setNewSocialUrl] = useState('');
 
   useEffect(() => {
     if (user?.uid) {
@@ -304,7 +339,7 @@ const ProfileScreen: React.FC = () => {
         profilePhotoUrl,
         bannerPhotoUrl,
         updatedAt: new Date(),
-      };
+      } as Profile;
 
       console.log('📝 Updating user profile in Firestore...');
       await UserService.updateUserProfile(user.uid, updatedProfile);
@@ -418,12 +453,10 @@ const ProfileScreen: React.FC = () => {
     >
       {/* Banner Image */}
       <View style={styles.bannerContainer}>
-        {profile.bannerPhotoUrl ? (
-          <Image source={{ uri: profile.bannerPhotoUrl }} style={styles.bannerImage} />
-        ) : (
-          <View style={styles.defaultBanner}>
-            <Ionicons name="image-outline" size={40} color="#ccc" />
-          </View>
+        {(
+          !!profile.bannerPhotoUrl
+            ? <Image source={{ uri: profile.bannerPhotoUrl }} style={styles.bannerImage} />
+            : <Image source={{ uri: ProfileImageService.getDefaultImageUrl('banner') }} style={styles.bannerImage} />
         )}
         {isEditing && (
           <TouchableOpacity
@@ -756,6 +789,82 @@ const ProfileScreen: React.FC = () => {
               )}
             </View>
           </ScrollView>
+        )}
+      </View>
+
+      {/* Social Links Section */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Social Links</Text>
+        {isEditing ? (
+          <View>
+            <View style={styles.inputContainer}>
+                      <TextInput
+          style={[styles.editInput, { flex: 1 }]}
+          value={newSocialUrl}
+          onChangeText={setNewSocialUrl}
+          placeholder="Paste a social URL (YouTube, Instagram, LinkedIn, etc.)"
+          autoCapitalize="none"
+          keyboardType="url"
+        />
+                      <TouchableOpacity
+          onPress={() => {
+            const trimmed = newSocialUrl.trim();
+            if (!trimmed) return;
+            try {
+              const platform = detectPlatform(trimmed);
+              const existing = profile.socialLinks || [];
+              // prevent duplicates by same url
+              if (!existing.some(l => l.url === trimmed)) {
+                setProfile(prev => ({
+                  ...prev,
+                  socialLinks: [...existing, { platform, url: trimmed }],
+                }));
+              }
+              setNewSocialUrl('');
+            } catch {}
+          }}
+          style={[styles.addButton, { paddingHorizontal: 6 }]}
+        >
+          <Ionicons name="add-circle-outline" size={28} color="#007AFF" />
+        </TouchableOpacity>
+            </View>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+              {(profile.socialLinks || []).map((link, idx) => (
+                <View key={`${link.platform}-${idx}`} style={styles.socialPill}>
+                  <Ionicons name={platformIconName(link.platform)} size={16} color="#007AFF" />
+                  <Text style={styles.socialPillText}>{link.platform}</Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setProfile(prev => ({
+                        ...prev,
+                        socialLinks: (prev.socialLinks || []).filter((_, i) => i !== idx),
+                      }))
+                    }
+                    style={{ marginLeft: 6 }}
+                  >
+                    <Ionicons name="close-circle" size={16} color="#007AFF" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {(profile.socialLinks || []).length === 0 ? (
+              <Text style={styles.emptyText}>No social links added</Text>
+            ) : (
+              (profile.socialLinks || []).map((link, idx) => (
+                <TouchableOpacity
+                  key={`${link.platform}-${idx}`}
+                  style={styles.socialIcon}
+                  onPress={() => Linking.openURL(link.url)}
+                >
+                  <Ionicons name={platformIconName(link.platform)} size={22} color="#333" />
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
         )}
       </View>
 
@@ -1264,6 +1373,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#555',
     marginTop: 2,
+  },
+  socialPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f8ff',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  socialPillText: {
+    marginLeft: 6,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  socialIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f3f3f3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    marginBottom: 8,
   },
 });
 

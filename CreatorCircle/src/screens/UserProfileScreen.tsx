@@ -10,11 +10,12 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
-import { Profile, Post } from '../types';
+import { Profile, Post, SocialLink, SocialPlatform } from '../types';
 import { UserService } from '../services/userService';
 import { PostService } from '../services/postService';
 import { MessagingService } from '../services/messagingService';
@@ -51,6 +52,39 @@ function getNextLevelXp(level: number): number {
   if (level === 4) return 2000;
   if (level === 5) return 4000;
   return getLevelStart(level) + 2000;
+}
+
+function detectPlatform(url: string): SocialPlatform {
+  const u = url?.toLowerCase?.() || '';
+  if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
+  if (u.includes('instagram.com')) return 'instagram';
+  if (u.includes('linkedin.com')) return 'linkedin';
+  if (u.includes('twitter.com') || u.includes('x.com')) return 'twitter';
+  if (u.includes('facebook.com')) return 'facebook';
+  if (u.includes('github.com')) return 'github';
+  if (u.includes('tiktok.com')) return 'tiktok';
+  return 'website';
+}
+
+function platformIconName(platform: SocialPlatform): keyof typeof Ionicons.glyphMap {
+  switch (platform) {
+    case 'youtube':
+      return 'logo-youtube';
+    case 'instagram':
+      return 'logo-instagram';
+    case 'linkedin':
+      return 'logo-linkedin';
+    case 'twitter':
+      return 'logo-twitter';
+    case 'facebook':
+      return 'logo-facebook';
+    case 'github':
+      return 'logo-github';
+    case 'tiktok':
+      return 'logo-tiktok';
+    default:
+      return 'link-outline';
+  }
 }
 
 const UserProfileScreen: React.FC = () => {
@@ -608,6 +642,24 @@ const UserProfileScreen: React.FC = () => {
           </View>
         )}
 
+        {/* Social Links Section */}
+        {profile.socialLinks && profile.socialLinks.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Social</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+              {profile.socialLinks.map((link, idx) => (
+                <TouchableOpacity
+                  key={`${link.platform || detectPlatform(link.url)}-${idx}`}
+                  style={styles.socialIcon}
+                  onPress={() => Linking.openURL(link.url)}
+                >
+                  <Ionicons name={platformIconName(link.platform || detectPlatform(link.url))} size={22} color="#333" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Social Stats */}
         <View style={styles.socialStats}>
           <View style={styles.statItem}>
@@ -1105,6 +1157,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     marginLeft: 6,
+  },
+  socialIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f3f3f3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    marginBottom: 8,
   },
 });
 

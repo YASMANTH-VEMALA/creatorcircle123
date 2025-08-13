@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,10 @@ import {
   Modal,
   ScrollView,
   Image,
+  Linking,
+  TextInput,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { locationService, UserLocation, LocationUpdate } from '../services/locationService';
@@ -150,6 +153,71 @@ const NearbyCreatorsScreen: React.FC = () => {
   const [selectedUser, setSelectedUser] = useState<UserLocation | null>(null);
   const [showUserModal, setShowUserModal] = useState(false);
   const [sendingRequest, setSendingRequest] = useState(false);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
+  const [query, setQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+
+  // Derive available chip options from nearby users (fallback to profile lists)
+  const availableSkills = useMemo(() => {
+    const set = new Set<string>();
+    nearbyUsers.forEach(u => (u.skills || []).forEach((s) => set.add(s)));
+    (userProfile?.skills || []).forEach((s: string) => set.add(s));
+    return Array.from(set).slice(0, 20);
+  }, [nearbyUsers, userProfile]);
+
+  const availableInterests = useMemo(() => {
+    const set = new Set<string>();
+    nearbyUsers.forEach(u => (u.interests || []).forEach((i) => set.add(i)));
+    (userProfile?.interests || []).forEach((i: string) => set.add(i));
+    return Array.from(set).slice(0, 20);
+  }, [nearbyUsers, userProfile]);
+
+  // Suggestions based on query
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [] as Array<{ type: 'user'|'skill'|'interest'; id: string; label: string; payload?: any } >;
+    const skillSugg = availableSkills
+      .filter((s) => s.toLowerCase().includes(q))
+      .slice(0, 5)
+      .map((s) => ({ type: 'skill' as const, id: `skill-${s}`, label: s }));
+    const interestSugg = availableInterests
+      .filter((i) => i.toLowerCase().includes(q))
+      .slice(0, 5)
+      .map((i) => ({ type: 'interest' as const, id: `interest-${i}`, label: i }));
+    const userSugg = nearbyUsers
+      .filter((u) => (u.displayName || '').toLowerCase().includes(q))
+      .slice(0, 8)
+      .map((u) => ({ type: 'user' as const, id: u.uid, label: u.displayName || 'Unknown', payload: u }));
+    return [...userSugg, ...skillSugg, ...interestSugg].slice(0, 10);
+  }, [query, availableSkills, availableInterests, nearbyUsers]);
+
+  // Filter users client-side by selected skills/interests
+  const filteredUsers = useMemo(() => {
+    return nearbyUsers.filter((u) => {
+      const skillOk = selectedSkills.length === 0 || (u.skills || []).some(s => selectedSkills.includes(s));
+      const interestOk = selectedInterests.length === 0 || (u.interests || []).some(i => selectedInterests.includes(i));
+      return skillOk && interestOk;
+    });
+  }, [nearbyUsers, selectedSkills, selectedInterests]);
+
+  // Ask for foreground permission (with Settings fallback) when needed
+  const ensureForegroundPermission = async (): Promise<boolean> => {
+    const hasFg = await locationService.checkLocationPermission();
+    if (hasFg) return true;
+    const granted = await locationService.requestLocationPermission();
+    if (granted) return true;
+
+    Alert.alert(
+      'Permission needed',
+      'Please allow location access in device settings to use Nearby Creators.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => Linking.openSettings() },
+      ]
+    );
+    return false;
+  };
 
   useEffect(() => {
     initializeLocation();
@@ -162,86 +230,145 @@ const NearbyCreatorsScreen: React.FC = () => {
     try {
       setLoading(true);
 
+      // Load user profile
+      let loadedProfile: any = null;
       if (user?.uid) {
-        const profile = await UserService.getUserProfile(user.uid);
-        setUserProfile(profile);
+        loadedProfile = await UserService.getUserProfile(user.uid);
+        setUserProfile(loadedProfile);
       }
 
+      // Restore toggle state
       const saved = await AsyncStorage.getItem(STORAGE_KEY_TOGGLE);
       const enabled = saved ? JSON.parse(saved) : false;
       setIsLocationShared(enabled);
 
-      const location = await locationService.getCurrentLocation();
+      // Request permission explicitly
+      const hasPermission = await ensureForegroundPermission();
+
+      // Get current device location
+      const location = hasPermission ? await locationService.getCurrentLocation() : null;
+      let initialLocationUpdate: LocationUpdate | null = null;
       if (location) {
-        const locationUpdate: LocationUpdate = {
+        initialLocationUpdate = {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
           accuracy: location.coords.accuracy ?? undefined,
           timestamp: location.timestamp ?? Date.now(),
         };
-        setCurrentLocation(locationUpdate);
+        setCurrentLocation(initialLocationUpdate);
       }
 
-      if (enabled && user?.uid && userProfile && currentLocation) {
+      // If previously enabled, start sharing and listening using freshly loaded data
+      if (enabled && user?.uid && loadedProfile && initialLocationUpdate) {
+        // Only auto-start if foreground permission is granted
+        const hasFg = await locationService.checkLocationPermission();
+        if (hasFg) {
         await locationService.enableSharing(
           user.uid,
           {
-            displayName: userProfile.name || user.email || 'Unknown',
-            college: userProfile.college || 'Unknown',
-            skills: userProfile.skills || [],
-            interests: userProfile.interests || [],
-            verified: userProfile.isVerified || false,
-            photoURL: userProfile.profilePhotoUrl || undefined,
+              displayName: loadedProfile.name || user.email || 'Unknown',
+              college: loadedProfile.college || 'Unknown',
+              skills: loadedProfile.skills || [],
+              interests: loadedProfile.interests || [],
+              verified: loadedProfile.isVerified || false,
+              photoURL: loadedProfile.profilePhotoUrl || undefined,
           },
           (locationUpdate) => setCurrentLocation(locationUpdate)
         );
-        locationService.listenToNearbyUsers(user.uid, currentLocation, setNearbyUsers);
+          locationService.listenToNearbyUsers(user.uid, initialLocationUpdate, setNearbyUsers);
+        }
       }
 
       setLoading(false);
-    } catch (error) {
-      console.error('Error initializing location:', error);
+    } catch (error: any) {
+      console.warn('Error initializing location:', error);
+      setIsLocationShared(false);
+      await AsyncStorage.setItem(STORAGE_KEY_TOGGLE, JSON.stringify(false));
       setLoading(false);
     }
   };
 
   const handleLocationToggle = async (enabled: boolean) => {
     try {
-      if (!user?.uid || !userProfile) {
-        Alert.alert('Error', 'User profile not available');
+      if (!user?.uid) {
+        Alert.alert('Error', 'User not available');
         return;
       }
 
+      // Optimistic UI
       setIsLocationShared(enabled);
       await AsyncStorage.setItem(STORAGE_KEY_TOGGLE, JSON.stringify(enabled));
 
       if (enabled) {
+        // Ensure permission now
+        const ok = await ensureForegroundPermission();
+        if (!ok) {
+          setIsLocationShared(false);
+          await AsyncStorage.setItem(STORAGE_KEY_TOGGLE, JSON.stringify(false));
+          return;
+        }
+
+        // Ensure profile is loaded
+        const profile = userProfile || (await UserService.getUserProfile(user.uid));
+        if (!profile) {
+          throw new Error('User profile not available');
+        }
+        if (!userProfile) setUserProfile(profile);
+
+        // Ensure current device location is available
+        let baseLocation = currentLocation;
+        if (!baseLocation) {
+          const loc = await locationService.getCurrentLocation();
+          if (!loc) throw new Error('Location permission not granted');
+          baseLocation = {
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            accuracy: loc.coords.accuracy ?? undefined,
+            timestamp: loc.timestamp ?? Date.now(),
+          };
+          setCurrentLocation(baseLocation);
+        }
+
+        // Start sharing and listen for nearby users
         await locationService.enableSharing(
           user.uid,
           {
-            displayName: userProfile.name || user.email || 'Unknown',
-            college: userProfile.college || 'Unknown',
-            skills: userProfile.skills || [],
-            interests: userProfile.interests || [],
-            verified: userProfile.isVerified || false,
-            photoURL: userProfile.profilePhotoUrl || undefined,
+            displayName: profile.name || user.email || 'Unknown',
+            college: profile.college || 'Unknown',
+            skills: profile.skills || [],
+            interests: profile.interests || [],
+            verified: profile.isVerified || false,
+            photoURL: profile.profilePhotoUrl || undefined,
           },
           (locationUpdate) => setCurrentLocation(locationUpdate)
         );
-        if (currentLocation) {
+
           locationService.listenToNearbyUsers(
             user.uid,
-            currentLocation,
+          baseLocation,
             (users) => setNearbyUsers(users)
           );
-        }
       } else {
         await locationService.disableSharing(user.uid);
         setNearbyUsers([]);
+        setSelectedUser(null);
+        setShowUserModal(false);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error toggling location:', error);
+      const message = String(error?.message || error);
+      if (message.includes('permission')) {
+        Alert.alert(
+          'Permission Needed',
+          'Please enable location access in device settings to share your location.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
+      } else {
       Alert.alert('Error', 'Failed to update location sharing');
+      }
       setIsLocationShared(!enabled);
     }
   };
@@ -314,7 +441,7 @@ const NearbyCreatorsScreen: React.FC = () => {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top','bottom']}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Nearby Creators</Text>
@@ -327,13 +454,99 @@ const NearbyCreatorsScreen: React.FC = () => {
             thumbColor={isLocationShared ? '#007AFF' : '#f4f3f4'}
           />
         </View>
+        {/* Search Bar */}
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={16} color="#777" />
+          <TextInput
+            style={styles.searchInput}
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search creators, skills, interests"
+            placeholderTextColor="#999"
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+          />
+          {!!query && (
+            <TouchableOpacity onPress={() => setQuery('')}>
+              <Ionicons name="close-circle" size={16} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
+        {(searchFocused || !!query) && suggestions.length > 0 && (
+          <View style={styles.suggestionsPanel}>
+            {suggestions.map((s) => (
+              <TouchableOpacity
+                key={s.id}
+                style={styles.suggestionRow}
+                onPress={() => {
+                  if (s.type === 'user' && s.payload) {
+                    setSelectedUser(s.payload);
+                    setShowUserModal(true);
+                  } else if (s.type === 'skill') {
+                    setSelectedSkills((prev) => prev.includes(s.label) ? prev : [...prev, s.label]);
+                  } else if (s.type === 'interest') {
+                    setSelectedInterests((prev) => prev.includes(s.label) ? prev : [...prev, s.label]);
+                  }
+                  setQuery('');
+                  setSearchFocused(false);
+                }}
+              >
+                <Ionicons
+                  name={s.type === 'user' ? 'person-outline' : s.type === 'skill' ? 'pricetag-outline' : 'hash'}
+                  size={16}
+                  color="#555"
+                />
+                <Text style={styles.suggestionText}>{s.type === 'interest' ? `#${s.label}` : s.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/* Filters */}
+      <View style={styles.filtersBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+          <TouchableOpacity
+            style={[styles.filterChip, (selectedSkills.length>0 || selectedInterests.length>0) && styles.filterChipSecondary]}
+            onPress={() => { setSelectedSkills([]); setSelectedInterests([]); }}
+          >
+            <Ionicons name="filter" size={14} color="#007AFF" />
+            <Text style={styles.filterChipText}>All</Text>
+          </TouchableOpacity>
+
+          {availableSkills.map((s) => {
+            const active = selectedSkills.includes(s);
+            return (
+              <TouchableOpacity
+                key={`skill-${s}`}
+                style={[styles.filterChip, active && styles.filterChipActive]}
+                onPress={() => setSelectedSkills(prev => active ? prev.filter(x => x!==s) : [...prev, s])}
+              >
+                <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{s}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {availableInterests.map((i) => {
+            const active = selectedInterests.includes(i);
+            return (
+              <TouchableOpacity
+                key={`interest-${i}`}
+                style={[styles.filterChip, active && styles.filterChipActive]}
+                onPress={() => setSelectedInterests(prev => active ? prev.filter(x => x!==i) : [...prev, i])}
+              >
+                <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>#{i}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {/* Map */}
       <View style={styles.mapContainer}>
         <GoogleMapView
           currentLocation={currentLocation}
-          nearbyUsers={nearbyUsers.map(user => ({
+          nearbyUsers={filteredUsers.map(user => ({
             uid: user.uid,
             displayName: user.displayName,
             photoURL: user.photoURL,
@@ -353,13 +566,13 @@ const NearbyCreatorsScreen: React.FC = () => {
       {/* Status Bar */}
       <View style={styles.statusBar}>
         <View style={styles.statusItem}>
-          <View style={styles.statusDot} />
+          <View style={[styles.statusDot, !isLocationShared && styles.statusDotDisabled]} />
           <Text style={styles.statusText}>
             {isLocationShared ? 'Sharing location' : 'Location sharing disabled'}
           </Text>
         </View>
         <Text style={styles.userCount}>
-          {nearbyUsers.length} creator{nearbyUsers.length !== 1 ? 's' : ''} nearby
+          {filteredUsers.length} creator{filteredUsers.length !== 1 ? 's' : ''} nearby
         </Text>
       </View>
 
@@ -370,7 +583,7 @@ const NearbyCreatorsScreen: React.FC = () => {
         onClose={() => setShowUserModal(false)}
         onSendRequest={handleSendRequest}
       />
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -393,15 +606,16 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: 'white',
     paddingHorizontal: 20,
-    paddingVertical: 15,
+    paddingTop: 8,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '700',
     color: '#333',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   locationToggle: {
     flexDirection: 'row',
@@ -411,6 +625,78 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 16,
     color: '#666',
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+    backgroundColor: '#fafafa',
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    color: '#333',
+  },
+  suggestionsPanel: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    backgroundColor: 'white',
+    overflow: 'hidden',
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f2f2f2',
+  },
+  suggestionText: {
+    marginLeft: 8,
+    color: '#333',
+  },
+  filtersBar: {
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  chipsRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    marginRight: 8,
+    backgroundColor: '#fff',
+  },
+  filterChipSecondary: {
+    borderColor: '#999',
+  },
+  filterChipActive: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  filterChipText: {
+    color: '#007AFF',
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  filterChipTextActive: {
+    color: 'white',
   },
   mapContainer: {
     flex: 1,
@@ -435,6 +721,9 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#4CAF50',
     marginRight: 8,
+  },
+  statusDotDisabled: {
+    backgroundColor: '#bbb',
   },
   statusText: {
     fontSize: 14,

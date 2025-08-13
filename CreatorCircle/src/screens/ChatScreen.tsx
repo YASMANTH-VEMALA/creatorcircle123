@@ -242,52 +242,84 @@ const ChatScreen: React.FC = () => {
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const isMyMessage = item.senderId === user?.uid;
     
-    // Debug logging
-    console.log('Rendering message:', {
-      id: item.id,
-      senderId: item.senderId,
-      message: item.message.substring(0, 30) + '...',
-      timestamp: item.timestamp,
-      isMyMessage
-    });
+    const onLongPress = () => {
+      if (!isMyMessage) return;
+      Alert.alert(
+        'Message options',
+        undefined,
+        [
+          {
+            text: 'Edit',
+            onPress: () => {
+              // Simple inline prompt
+              let editedText = item.message;
+              Alert.prompt(
+                'Edit message',
+                undefined,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Save',
+                    onPress: async (text) => {
+                      const newText = (text || '').trim();
+                      if (!newText) return;
+                      try {
+                        await collaborationService.editChatMessage(item.id, user!.uid, newText);
+                      } catch (e: any) {
+                        Alert.alert('Error', e?.message || 'Failed to edit message');
+                      }
+                    },
+                  },
+                ],
+                'plain-text',
+                editedText
+              );
+            },
+          },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await collaborationService.deleteChatMessage(item.id, user!.uid);
+              } catch (e: any) {
+                Alert.alert('Error', e?.message || 'Failed to delete message');
+              }
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+    };
     
     // Safe timestamp handling
     let messageTime = '';
     try {
       const timestamp = item.timestamp;
       let date: Date;
-      
       if (timestamp && typeof timestamp.toMillis === 'function') {
-        // Firestore Timestamp
         date = new Date(timestamp.toMillis());
       } else if (timestamp && typeof timestamp.toDate === 'function') {
-        // Firestore Timestamp
         date = timestamp.toDate();
       } else if (timestamp instanceof Date) {
-        // JavaScript Date
         date = timestamp;
       } else if (timestamp && typeof timestamp === 'object' && timestamp.seconds) {
-        // Firestore Timestamp object
         date = new Date(timestamp.seconds * 1000);
       } else {
-        // Fallback
         date = new Date();
       }
-      
-      messageTime = date.toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    } catch (error) {
-      console.error('Error formatting message time:', error);
+      messageTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
       messageTime = '--:--';
     }
       
       return (
+      <TouchableOpacity activeOpacity={0.8} onLongPress={onLongPress}>
       <View style={[styles.messageContainer, isMyMessage ? styles.myMessage : styles.otherMessage]}>
         <View style={[styles.messageBubble, isMyMessage ? styles.myBubble : styles.otherBubble]}>
           <Text style={[styles.messageText, isMyMessage ? styles.myMessageText : styles.otherMessageText]}>
             {item.message}
+              {item.isEdited && !item.isDeleted ? <Text style={{ fontSize: 11, color: isMyMessage ? 'rgba(255,255,255,0.8)' : '#999' }}>  (edited)</Text> : null}
                 </Text>
           <View style={styles.messageFooter}>
             <Text style={[styles.messageTime, isMyMessage ? styles.myMessageTime : styles.otherMessageTime]}>
@@ -295,44 +327,29 @@ const ChatScreen: React.FC = () => {
               </Text>
             {isMyMessage && (
               <View style={styles.readReceipt}>
-                <Ionicons 
-                  name={item.read ? "checkmark-done" : "checkmark"} 
-                  size={14} 
-                  color={item.read ? "#34C759" : "rgba(255, 255, 255, 0.7)"} 
-                />
+                  <Ionicons name={item.read ? 'checkmark-done' : 'checkmark'} size={14} color={item.read ? '#34C759' : 'rgba(255, 255, 255, 0.7)'} />
                           </View>
                         )}
                 </View>
                   </View>
               </View>
+      </TouchableOpacity>
     );
   };
 
   const renderHeader = () => (
     <View style={styles.header}>
-            <TouchableOpacity 
-        style={styles.backButton}
-        onPress={() => navigation.goBack()}
-      >
+      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
         <Ionicons name="arrow-back" size={24} color="#007AFF" />
             </TouchableOpacity>
 
             <TouchableOpacity 
         style={styles.userInfo}
               onPress={() => {
-          navigation.navigate('UserProfile' as never, {
-            userId: otherUserId,
-            userName: otherUserName
-          } as never);
+          navigation.navigate('UserProfile' as never, { userId: otherUserId, userName: otherUserName } as never);
         }}
       >
-        <Avatar
-          size="medium"
-          source={otherUserProfile?.profilePhotoUrl}
-          fallback={otherUserName.charAt(0).toUpperCase()}
-          verified={otherUserProfile?.verifiedBadge !== 'none'}
-        />
-
+        <Avatar size="medium" source={otherUserProfile?.profilePhotoUrl} fallback={otherUserName.charAt(0).toUpperCase()} verified={otherUserProfile?.verifiedBadge !== 'none'} />
         <View style={styles.userDetails}>
           <View style={styles.nameRow}>
             <Text style={styles.userName}>{otherUserName}</Text>
@@ -341,9 +358,7 @@ const ChatScreen: React.FC = () => {
             )}
           </View>
           <Text style={styles.userStatus}>
-            {otherUserStatus.status === 'online' ? 'Active now' : 
-             otherUserStatus.status === 'typing' ? 'Typing...' :
-             formatLastSeen(otherUserStatus.lastSeen)}
+            {otherUserStatus.status === 'online' ? 'Active now' : otherUserStatus.status === 'typing' ? 'Typing...' : formatLastSeen(otherUserStatus.lastSeen)}
               </Text>
         </View>
             </TouchableOpacity>
@@ -351,22 +366,10 @@ const ChatScreen: React.FC = () => {
             <TouchableOpacity 
         style={styles.moreButton}
               onPress={() => {
-                Alert.alert(
-            'Chat Options',
-            'What would you like to do?',
-            [
-              { text: 'View Profile', onPress: () => {
-                navigation.navigate('UserProfile' as never, {
-                  userId: otherUserId,
-                  userName: otherUserName
-                } as never);
-              }},
-              { text: 'View Location', onPress: () => {
-                navigation.navigate('NearbyCreators' as never);
-              }},
+          Alert.alert('Chat Options', undefined, [
+            { text: 'View Profile', onPress: () => navigation.navigate('UserProfile' as never, { userId: otherUserId, userName: otherUserName } as never) },
                     { text: 'Cancel', style: 'cancel' },
-                  ]
-                );
+          ]);
               }}
       >
         <Ionicons name="ellipsis-vertical" size={20} color="#007AFF" />

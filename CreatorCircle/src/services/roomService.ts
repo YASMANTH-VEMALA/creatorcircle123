@@ -316,6 +316,31 @@ class RoomService {
     });
     return unsub;
   }
+
+  subscribeToAllRooms(onUpdate: (rooms: Room[]) => void): () => void {
+    const q = query(collection(db, 'rooms'), orderBy('updatedAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      const now = Date.now();
+      const list: Room[] = [];
+      snap.forEach((d) => {
+        const r = { id: d.id, ...(d.data() as Room) } as any;
+        const endsAtMs = (r.endsAt as any)?.toMillis?.() || (r.endsAt as any);
+        if (r.isTemporary && endsAtMs && endsAtMs <= now) {
+          // skip expired temp rooms
+          return;
+        }
+        list.push(r);
+      });
+      onUpdate(list);
+    });
+    return unsub;
+  }
+
+  isRoomExpired(room: Room | (Room & { endsAt?: any })): boolean {
+    if (!room?.isTemporary) return false;
+    const endsAtMs = (room as any)?.endsAt?.toMillis?.() || (room as any)?.endsAt;
+    return !!endsAtMs && endsAtMs <= Date.now();
+  }
 }
 
 export const roomService = new RoomService(); 

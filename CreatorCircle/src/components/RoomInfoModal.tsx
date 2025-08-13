@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Room, RoomMember, roomService } from '../services/roomService';
 import { Profile } from '../types';
 import { useNavigation } from '@react-navigation/native';
+import * as Clipboard from 'expo-clipboard';
 
 interface Props {
   visible: boolean;
@@ -77,6 +78,7 @@ const RoomInfoModal: React.FC<Props> = ({ visible, onClose, room, members, curre
   const renderMember = ({ item }: { item: RoomMember & { profile?: Profile } }) => {
     const you = item.uid === currentUserId;
     const isMemberAdmin = room.admins?.includes(item.uid);
+    const isHost = room.creatorId === item.uid;
     return (
       <TouchableOpacity
         style={styles.memberRow}
@@ -102,12 +104,15 @@ const RoomInfoModal: React.FC<Props> = ({ visible, onClose, room, members, curre
           </View>
         )}
         <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Text style={styles.nameRow}>
             {item.profile?.name || 'Unknown'} {you ? ' (You)' : ''}
           </Text>
+            {isHost && <View style={[styles.badge, { backgroundColor: '#6a1b9a' }]}><Text style={styles.badgeText}>Host</Text></View>}
+            {!isHost && isMemberAdmin && <View style={styles.badge}><Text style={styles.badgeText}>Admin</Text></View>}
+          </View>
           <Text style={styles.sub}>{item.profile?.college || ''}</Text>
         </View>
-        {isMemberAdmin && <Ionicons name="shield-checkmark" size={18} color="#007AFF" />}
       </TouchableOpacity>
     );
   };
@@ -119,6 +124,33 @@ const RoomInfoModal: React.FC<Props> = ({ visible, onClose, room, members, curre
           <View style={styles.headerRow}>
             <Text style={styles.title}>{room.name}</Text>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color="#222" /></TouchableOpacity>
+          </View>
+
+          {/* Remaining time for temporary rooms */}
+          {room.isTemporary && room.endsAt && (
+            <Text style={styles.timeLeft}>
+              Expires in {(() => {
+                const endsAtMs = (room as any).endsAt?.toMillis?.() || (room as any).endsAt;
+                const diff = Math.max(0, (endsAtMs || 0) - Date.now());
+                const hh = Math.floor(diff / 3600000);
+                const mm = Math.floor((diff % 3600000) / 60000);
+                const ss = Math.floor((diff % 60000) / 1000);
+                return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`;
+              })()}
+            </Text>
+          )}
+
+          {/* Room ID row */}
+          <View style={styles.idRow}>
+            <Text style={styles.idLabel}>Room ID:</Text>
+            <Text selectable style={styles.idValue}>{room.id}</Text>
+            <TouchableOpacity
+              accessibilityLabel="Copy Room ID"
+              onPress={async () => { await Clipboard.setStringAsync(room.id); Alert.alert('Copied', 'Room ID copied to clipboard'); }}
+              style={styles.copyBtn}
+            >
+              <Ionicons name="copy-outline" size={18} color="#007AFF" />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.glassAction}>
@@ -159,6 +191,11 @@ const styles = StyleSheet.create({
   card: { backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 16, padding: 16, backdropFilter: 'blur(10px)' as any },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: 18, fontWeight: '700', color: '#222' },
+  idRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+  timeLeft: { marginTop: 4, color: '#c62828', fontSize: 12, fontWeight: '600' },
+  idLabel: { color: '#555', marginRight: 6, fontSize: 13 },
+  idValue: { color: '#222', fontWeight: '600' },
+  copyBtn: { marginLeft: 8, padding: 6 },
   glassAction: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 12, padding: 10, marginTop: 12, justifyContent: 'space-between' },
   exitBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FF3B30', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
   deleteBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#c62828', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
@@ -170,6 +207,8 @@ const styles = StyleSheet.create({
   avatarFallbackText: { color: 'white', fontWeight: '700' },
   nameRow: { fontSize: 15, fontWeight: '600', color: '#222' },
   sub: { fontSize: 12, color: '#777' },
+  badge: { marginLeft: 8, backgroundColor: '#007AFF', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  badgeText: { color: 'white', fontSize: 10, fontWeight: '700' },
 });
 
 export default RoomInfoModal; 
