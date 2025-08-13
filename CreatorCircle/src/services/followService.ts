@@ -1,157 +1,106 @@
-import { 
-  collection, 
-  doc, 
-  addDoc, 
-  deleteDoc, 
-  query, 
-  where, 
-  getDocs,
-  updateDoc,
-  increment,
-  serverTimestamp 
+import {
+	collection,
+	doc,
+	setDoc,
+	deleteDoc,
+	getDoc,
+	getDocs,
+	onSnapshot,
+	query,
+	updateDoc,
+	increment,
+	serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { NotificationService } from './notificationService';
-import { UserService } from './userService';
 
 export class FollowService {
-  // Follow a user
-  static async followUser(followerId: string, followeeId: string): Promise<void> {
-    try {
-      // Don't allow self-following
-      if (followerId === followeeId) {
-        throw new Error('Cannot follow yourself');
-      }
+	static async followUser(myId: string, targetId: string): Promise<void> {
+		if (!myId || !targetId) throw new Error('Invalid user ids');
+		if (myId === targetId) throw new Error('Cannot follow yourself');
 
-      // Check if already following
-      const existingFollow = await this.isFollowing(followerId, followeeId);
-      if (existingFollow) {
-        throw new Error('Already following this user');
-      }
+		// Ensure target profile is updated
+		const targetSnap = await getDoc(doc(db, 'users', targetId));
+		if (!targetSnap.exists()) throw new Error('User not found');
+		const targetData: any = targetSnap.data();
+		if (!targetData.profileUpdated) {
+			throw new Error('User has not updated profile yet.');
+		}
 
-      // Create follow relationship
-      await addDoc(collection(db, 'follows'), {
-        followerId,
-        followeeId,
-        createdAt: serverTimestamp(),
-      });
+		// Idempotency: if already following, bail
+		const followingRef = doc(db, 'users', myId, 'following', targetId);
+		const followersRef = doc(db, 'users', targetId, 'followers', myId);
+		const [followingSnap, followersSnap] = await Promise.all([getDoc(followingRef), getDoc(followersRef)]);
+		if (followingSnap.exists() && followersSnap.exists()) {
+			return;
+		}
 
-      // Update follower/following counts
-      await this.updateFollowCounts(followerId, followeeId, 1);
+		// Create both sides
+		await Promise.all([
+			setDoc(followingRef, { followedAt: serverTimestamp() }),
+			setDoc(followersRef, { followedAt: serverTimestamp() }),
+			updateDoc(doc(db, 'users', targetId), { xp: increment(10) }),
+			// Optional counters if present on profile
+			updateDoc(doc(db, 'users', myId), { following: increment(1) }).catch(() => {}),
+			updateDoc(doc(db, 'users', targetId), { followers: increment(1) }).catch(() => {}),
+			// Top-level notification document per spec
+			setDoc(doc(collection(db, 'notifications')), {
+				to: targetId,
+				from: myId,
+				type: 'follow',
+				createdAt: serverTimestamp(),
+				read: false,
+			}),
+		]);
+	}
 
-      // Create follow notification
-      try {
-        await NotificationService.createFollowNotification(followerId, followeeId);
-      } catch (notificationError) {
-        console.error('Error creating follow notification:', notificationError);
-        // Don't throw error - follow should still work even if notification fails
-      }
+	static async unfollowUser(myId: string, targetId: string): Promise<void> {
+		if (!myId || !targetId) throw new Error('Invalid user ids');
+		if (myId === targetId) return;
 
-    } catch (error) {
-      console.error('Error following user:', error);
-      throw error;
-    }
-  }
+		const followingRef = doc(db, 'users', myId, 'following', targetId);
+		const followersRef = doc(db, 'users', targetId, 'followers', myId);
 
-  // Unfollow a user
-  static async unfollowUser(followerId: string, followeeId: string): Promise<void> {
-    try {
-      // Find the follow relationship
-      const followQuery = query(
-        collection(db, 'follows'),
-        where('followerId', '==', followerId),
-        where('followeeId', '==', followeeId)
-      );
+		await Promise.all([
+			deleteDoc(followingRef).catch(() => {}),
+			deleteDoc(followersRef).catch(() => {}),
+			updateDoc(doc(db, 'users', targetId), { xp: increment(-10) }),
+			// Optional counters
+			updateDoc(doc(db, 'users', myId), { following: increment(-1) }).catch(() => {}),
+			updateDoc(doc(db, 'users', targetId), { followers: increment(-1) }).catch(() => {}),
+		]);
+	}
 
-      const snapshot = await getDocs(followQuery);
-      
-      if (snapshot.empty) {
-        throw new Error('Not following this user');
-      }
+	static async isFollowing(myId: string, targetId: string): Promise<boolean> {
+		const ref = doc(db, 'users', myId, 'following', targetId);
+		const snap = await getDoc(ref);
+		return snap.exists();
+	}
 
-      // Delete the follow relationship
-      const followDoc = snapshot.docs[0];
-      await deleteDoc(followDoc.ref);
+	static async getFollowersIds(userId: string): Promise<string[]> {
+		const snap = await getDocs(collection(db, 'users', userId, 'followers'));
+		return snap.docs.map((d) => d.id);
+	}
 
-      // Update follower/following counts
-      await this.updateFollowCounts(followerId, followeeId, -1);
+	static async getFollowingIds(userId: string): Promise<string[]> {
+		const snap = await getDocs(collection(db, 'users', userId, 'following'));
+		return snap.docs.map((d) => d.id);
+	}
 
-    } catch (error) {
-      console.error('Error unfollowing user:', error);
-      throw error;
-    }
-  }
+	static async getMutualFollowers(myId: string, targetId: string): Promise<string[]> {
+		const [myFollowers, theirFollowers] = await Promise.all([
+			this.getFollowersIds(myId),
+			this.getFollowersIds(targetId),
+		]);
+		const theirSet = new Set(theirFollowers);
+		return myFollowers.filter((id) => theirSet.has(id));
+	}
 
-  // Check if user is following another user
-  static async isFollowing(followerId: string, followeeId: string): Promise<boolean> {
-    try {
-      const followQuery = query(
-        collection(db, 'follows'),
-        where('followerId', '==', followerId),
-        where('followeeId', '==', followeeId)
-      );
-
-      const snapshot = await getDocs(followQuery);
-      return !snapshot.empty;
-    } catch (error) {
-      console.error('Error checking follow status:', error);
-      return false;
-    }
-  }
-
-  // Get followers of a user
-  static async getFollowers(userId: string): Promise<string[]> {
-    try {
-      const followersQuery = query(
-        collection(db, 'follows'),
-        where('followeeId', '==', userId)
-      );
-
-      const snapshot = await getDocs(followersQuery);
-      return snapshot.docs.map(doc => doc.data().followerId);
-    } catch (error) {
-      console.error('Error getting followers:', error);
-      return [];
-    }
-  }
-
-  // Get following of a user
-  static async getFollowing(userId: string): Promise<string[]> {
-    try {
-      const followingQuery = query(
-        collection(db, 'follows'),
-        where('followerId', '==', userId)
-      );
-
-      const snapshot = await getDocs(followingQuery);
-      return snapshot.docs.map(doc => doc.data().followeeId);
-    } catch (error) {
-      console.error('Error getting following:', error);
-      return [];
-    }
-  }
-
-  // Update follow counts in user profiles
-  private static async updateFollowCounts(
-    followerId: string, 
-    followeeId: string, 
-    change: number
-  ): Promise<void> {
-    try {
-      // Update follower's following count
-      const followerRef = doc(db, 'users', followerId);
-      await updateDoc(followerRef, {
-        following: increment(change),
-      });
-
-      // Update followee's followers count
-      const followeeRef = doc(db, 'users', followeeId);
-      await updateDoc(followeeRef, {
-        followers: increment(change),
-      });
-    } catch (error) {
-      console.error('Error updating follow counts:', error);
-      // Don't throw error - follow relationship should still be created/deleted
-    }
-  }
+	static async getMutualConnections(myId: string, targetId: string): Promise<string[]> {
+		const [myFollowing, theirFollowing] = await Promise.all([
+			this.getFollowingIds(myId),
+			this.getFollowingIds(targetId),
+		]);
+		const theirSet = new Set(theirFollowing);
+		return myFollowing.filter((id) => theirSet.has(id));
+	}
 } 

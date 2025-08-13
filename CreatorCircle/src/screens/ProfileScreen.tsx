@@ -30,6 +30,7 @@ import { useScroll } from '../contexts/ScrollContext';
 // XP: subscribe to xp logs and profile
 import { collection, onSnapshot, query, orderBy, limit, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { useFollowersCount } from '../hooks/useFollowersCount';
 
 const { width } = Dimensions.get('window');
 
@@ -144,6 +145,7 @@ const ProfileScreen: React.FC = () => {
   const [xpLogs, setXpLogs] = useState<XpLogEntry[]>([]);
   const [showXpLog, setShowXpLog] = useState(false);
   const [newSocialUrl, setNewSocialUrl] = useState('');
+  const liveFollowersCount = useFollowersCount(user?.uid);
 
   useEffect(() => {
     if (user?.uid) {
@@ -587,7 +589,7 @@ const ProfileScreen: React.FC = () => {
         </View>
         <View style={styles.metricDivider} />
         <View style={styles.metricItem}>
-          <Text style={styles.metricNumber}>{profile.followers}</Text>
+          <Text style={styles.metricNumber}>{liveFollowersCount}</Text>
           <Text style={styles.metricLabel}>Followers</Text>
         </View>
         <View style={styles.metricDivider} />

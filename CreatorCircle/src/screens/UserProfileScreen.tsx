@@ -29,6 +29,8 @@ import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Avatar } from '../components/ui/Avatar';
 import { Image } from 'expo-image';
+import { FollowService } from '../services/followService';
+import { useFollowersCount } from '../hooks/useFollowersCount';
 
 type UserProfileRouteParams = {
   userId: string;
@@ -103,6 +105,8 @@ const UserProfileScreen: React.FC = () => {
   const [isOwnProfile, setIsOwnProfile] = useState(false);
   const [hasCollaborated, setHasCollaborated] = useState(false);
   const [existingRequest, setExistingRequest] = useState<any>(null);
+  const [isFollowing, setIsFollowing] = useState<boolean>(false);
+  const liveFollowersCount = useFollowersCount(profile?.uid);
 
   const loadUserProfile = async () => {
     try {
@@ -304,6 +308,16 @@ const UserProfileScreen: React.FC = () => {
     return () => unsub();
   }, [userId]);
 
+  useEffect(() => {
+    (async () => {
+      if (!user?.uid || !userId) return;
+      try {
+        const following = await FollowService.isFollowing(user.uid, userId);
+        setIsFollowing(following);
+      } catch {}
+    })();
+  }, [user?.uid, userId]);
+
   // Prefetch key images to reduce perceived load time
   useEffect(() => {
     (async () => {
@@ -322,8 +336,22 @@ const UserProfileScreen: React.FC = () => {
     setRefreshing(false);
   };
 
-  const handleFollow = () => {
-    Alert.alert('Coming Soon', 'Follow feature coming soon!');
+  const handleFollow = async () => {
+    if (!user || !profile) return;
+    if (user.uid === profile.uid) return;
+    try {
+      // optimistic
+      setIsFollowing((prev) => !prev);
+      if (!isFollowing) {
+        await FollowService.followUser(user.uid, profile.uid);
+      } else {
+        await FollowService.unfollowUser(user.uid, profile.uid);
+      }
+    } catch (e: any) {
+      // revert on error
+      setIsFollowing((prev) => !prev);
+      Alert.alert('Follow Error', e?.message || 'Failed to update follow');
+    }
   };
 
   const handleMessage = async () => {
@@ -565,8 +593,8 @@ const UserProfileScreen: React.FC = () => {
           {!isOwnProfile && (
             <View style={styles.actionButtons}>
               <TouchableOpacity style={styles.followButton} onPress={handleFollow}>
-                <Ionicons name="person-add-outline" size={16} color="white" />
-                <Text style={styles.followButtonText}>Follow</Text>
+                <Ionicons name={isFollowing ? "person-remove-outline" : "person-add-outline"} size={16} color="white" />
+                <Text style={styles.followButtonText}>{isFollowing ? 'Unfollow' : 'Follow'}</Text>
               </TouchableOpacity>
               
               <TouchableOpacity style={styles.messageButton} onPress={handleMessage}>
@@ -663,7 +691,7 @@ const UserProfileScreen: React.FC = () => {
         {/* Social Stats */}
         <View style={styles.socialStats}>
           <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{profile.followers || 0}</Text>
+            <Text style={styles.statNumber}>{liveFollowersCount}</Text>
             <Text style={styles.statLabel}>Followers</Text>
           </View>
           <View style={styles.statItem}>
@@ -696,6 +724,14 @@ const UserProfileScreen: React.FC = () => {
             </View>
           )}
         </View>
+
+        {/* Mutuals Section */}
+        {user && !isOwnProfile && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Mutuals</Text>
+            <Mutuals userIdA={user.uid} userIdB={profile.uid} />
+          </View>
+        )}
       </ScrollView>
 
       {/* Collaboration Request Modal */}
@@ -1169,5 +1205,67 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 });
+
+// helper component to fetch and render mutuals
+const Mutuals: React.FC<{ userIdA: string; userIdB: string; }> = ({ userIdA, userIdB }) => {
+  const [mutualFollowers, setMutualFollowers] = useState<string[]>([]);
+  const [mutualConnections, setMutualConnections] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [mf, mc] = await Promise.all([
+          FollowService.getMutualFollowers(userIdA, userIdB),
+          FollowService.getMutualConnections(userIdA, userIdB),
+        ]);
+        setMutualFollowers(mf);
+        setMutualConnections(mc);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [userIdA, userIdB]);
+
+  if (loading) {
+    return (
+      <View style={{ paddingVertical: 8 }}>
+        <ActivityIndicator size="small" color="#007AFF" />
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      <Text style={{ fontWeight: '600', marginBottom: 6 }}>Mutual Followers ({mutualFollowers.length})</Text>
+      {mutualFollowers.length === 0 ? (
+        <Text style={{ color: '#777' }}>None</Text>
+      ) : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {mutualFollowers.slice(0, 12).map((id) => (
+            <View key={id} style={{ backgroundColor: '#f0f8ff', borderColor: '#007AFF', borderWidth: 1, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, marginRight: 6, marginBottom: 6 }}>
+              <Text style={{ color: '#007AFF', fontWeight: '500' }}>{id}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={{ height: 8 }} />
+
+      <Text style={{ fontWeight: '600', marginBottom: 6 }}>Mutual Connections ({mutualConnections.length})</Text>
+      {mutualConnections.length === 0 ? (
+        <Text style={{ color: '#777' }}>None</Text>
+      ) : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {mutualConnections.slice(0, 12).map((id) => (
+            <View key={id} style={{ backgroundColor: '#fff0f0', borderColor: '#ff6b6b', borderWidth: 1, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, marginRight: 6, marginBottom: 6 }}>
+              <Text style={{ color: '#ff6b6b', fontWeight: '500' }}>{id}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+};
 
 export default UserProfileScreen; 
