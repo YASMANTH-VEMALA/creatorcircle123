@@ -106,6 +106,24 @@ function platformIconName(platform: SocialPlatform): keyof typeof Ionicons.glyph
   }
 }
 
+const predefinedSkills = [
+  'Web Development',
+  'Mobile App Development',
+  'UI/UX Design',
+  'Graphic Design',
+  'Video Editing',
+  'Photography',
+  'Public Speaking',
+  'Marketing',
+  'Content Writing',
+  'Machine Learning',
+  'Data Analysis',
+  'Cybersecurity',
+  'Cloud Computing',
+  'Blockchain',
+  'Entrepreneurship',
+];
+
 const ProfileScreen: React.FC = () => {
   const { user } = useAuth();
   const { notifyScroll } = useScroll();
@@ -250,19 +268,19 @@ const ProfileScreen: React.FC = () => {
   };
 
   const addSkill = () => {
-    if (newSkill.trim()) {
-      const trimmedSkill = newSkill.trim();
-      const existingSkills = profile.skills || [];
-      
-      // Prevent duplicates (case-insensitive)
-      if (!existingSkills.some(skill => skill.toLowerCase() === trimmedSkill.toLowerCase())) {
-        setProfile(prev => ({
-          ...prev,
-          skills: [...existingSkills, trimmedSkill]
-        }));
-      }
+    const input = newSkill.trim();
+    if (!input) return;
+    const existingSkills = profile.skills || [];
+    const exists = existingSkills.some(s => s.toLowerCase() === input.toLowerCase());
+    if (exists) {
       setNewSkill('');
+      return;
     }
+    setProfile(prev => ({
+      ...prev,
+      skills: [...existingSkills, input],
+    }));
+    setNewSkill('');
   };
 
   const addInterest = () => {
@@ -335,18 +353,20 @@ const ProfileScreen: React.FC = () => {
         bannerPhotoUrl = await ProfileImageService.uploadProfileImage(bannerPhotoUrl, user.uid, 'banner');
       }
 
-      // Update profile with Firebase Storage URLs
-      const updatedProfile = {
-        ...profile,
+      // Exclude passion from writes; ensure skills is always an array
+      const { passion, ...rest } = profile as any;
+      const updates: Partial<Profile> = {
+        ...rest,
         profilePhotoUrl,
         bannerPhotoUrl,
+        skills: Array.isArray(rest.skills) ? rest.skills : [],
         updatedAt: new Date(),
-      } as Profile;
+      };
 
       console.log('📝 Updating user profile in Firestore...');
-      await UserService.updateUserProfile(user.uid, updatedProfile);
+      await UserService.updateUserProfile(user.uid, updates);
 
-      setProfile(updatedProfile);
+      setProfile({ ...(profile as any), profilePhotoUrl, bannerPhotoUrl, skills: updates.skills || [] } as Profile);
       setSaving(false);
       setIsEditing(false); // Exit edit mode after successful save
       Alert.alert('Success', 'Profile updated successfully!');
@@ -517,12 +537,7 @@ const ProfileScreen: React.FC = () => {
               onChangeText={(text) => setProfile(prev => ({ ...prev, college: text }))}
               placeholder="Your College"
             />
-            <TextInput
-              style={styles.editInput}
-              value={profile.passion}
-              onChangeText={(text) => setProfile(prev => ({ ...prev, passion: text }))}
-              placeholder="Your Passion (e.g., Photography, Music, Art)"
-            />
+            {/* Removed Your Passion field */}
             <TextInput
               style={styles.editInput}
               value={profile.location}
@@ -686,26 +701,56 @@ const ProfileScreen: React.FC = () => {
             <View style={styles.inputContainer}>
               <TextInput
                 style={styles.skillInput}
-                placeholder="Add a skill (e.g., Photography, Programming)"
+                placeholder="Type to search or add skills"
                 value={newSkill}
                 onChangeText={setNewSkill}
                 onSubmitEditing={addSkill}
+                autoCapitalize="words"
               />
               <TouchableOpacity onPress={addSkill} style={styles.addButton}>
                 <Ionicons name="add-circle-outline" size={24} color="#007AFF" />
               </TouchableOpacity>
             </View>
+
+            {/* Suggestions Dropdown */}
+            {newSkill.trim().length > 0 && (
+              <View style={styles.suggestionsPanel}>
+                <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 160 }}>
+                  {predefinedSkills
+                    .filter(s => s.toLowerCase().includes(newSkill.trim().toLowerCase()))
+                    .filter(s => !(profile.skills || []).some(x => x.toLowerCase() === s.toLowerCase()))
+                    .map((s) => (
+                      <TouchableOpacity key={s} style={styles.suggestionItem} onPress={() => {
+                        setProfile(prev => ({ ...prev, skills: [ ...(prev.skills || []), s ] }));
+                        setNewSkill('');
+                      }}>
+                        <Ionicons name="pricetag-outline" size={16} color="#555" />
+                        <Text style={styles.suggestionText}>{s}</Text>
+                      </TouchableOpacity>
+                    ))}
+
+                  {/* Add custom option */}
+                  {!(profile.skills || []).some(x => x.toLowerCase() === newSkill.trim().toLowerCase()) && (
+                    <TouchableOpacity style={styles.suggestionItem} onPress={addSkill}>
+                      <Ionicons name="add-outline" size={16} color="#007AFF" />
+                      <Text style={[styles.suggestionText, { color: '#007AFF' }]}>Add "{newSkill.trim()}"</Text>
+                    </TouchableOpacity>
+                  )}
+                </ScrollView>
+              </View>
+            )}
+
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={styles.skillsContainer}>
                 {profile.skills && profile.skills.length > 0 ? (
                   profile.skills.map((skill, index) => (
-                    <View key={index} style={styles.skillTag}>
+                    <View key={`${skill}-${index}`} style={styles.skillTag}>
                       <Text style={styles.skillText}>{skill}</Text>
                       <TouchableOpacity
                         onPress={() => {
                           setProfile(prev => ({
                             ...prev,
-                            skills: prev.skills?.filter((_, i) => i !== index) || []
+                            skills: (prev.skills || []).filter((_, i) => i !== index),
                           }));
                         }}
                       >
@@ -1402,6 +1447,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 8,
     marginBottom: 8,
+  },
+  suggestionsPanel: {
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  suggestionText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#333',
   },
 });
 
