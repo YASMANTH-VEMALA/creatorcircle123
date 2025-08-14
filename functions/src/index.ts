@@ -1,1 +1,2 @@
-export { cleanupExpiredRooms } from './cleanupExpiredRooms'; 
+export { cleanupExpiredRooms } from './cleanupExpiredRooms';
+export { getChatSuggestions } from './getChatSuggestions'; 
