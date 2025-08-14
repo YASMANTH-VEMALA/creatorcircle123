@@ -23,6 +23,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { Avatar } from '../components/ui/Avatar';
 import { doc, onSnapshot, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { getChatSuggestionsClient } from '../services/aiService';
 
 const { width } = Dimensions.get('window');
 
@@ -50,6 +51,8 @@ const ChatScreen: React.FC = () => {
   const [otherUserStatus, setOtherUserStatus] = useState<UserStatus>({ status: 'offline', lastSeen: null });
   const [isTyping, setIsTyping] = useState(false);
   const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+  const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const flatListRef = useRef<FlatList>(null);
   const appState = useRef(AppState.currentState);
@@ -79,6 +82,20 @@ const ChatScreen: React.FC = () => {
       updateUserStatus('offline');
     };
   }, [user?.uid, otherUserId]);
+
+  useEffect(() => {
+    // Idle detection: if no typing for 5s and input empty, fetch suggestions
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(async () => {
+      if (!newMessage.trim() && user?.uid && otherUserId) {
+        const suggestions = await getChatSuggestionsClient(otherUserId);
+        setAiSuggestions(suggestions);
+      }
+    }, 5000);
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    };
+  }, [newMessage, user?.uid, otherUserId]);
 
   const setupUserStatus = () => {
     if (user?.uid) {
@@ -196,7 +213,8 @@ const ChatScreen: React.FC = () => {
     if (!user?.uid || !otherUserId || !newMessage.trim()) return;
 
     const messageText = newMessage.trim();
-    setNewMessage(''); // Clear input immediately for better UX
+    setNewMessage('');
+    setAiSuggestions([]); // clear suggestions on send
 
     try {
       setSending(true);
@@ -337,6 +355,19 @@ const ChatScreen: React.FC = () => {
     );
   };
 
+  const renderSuggestions = () => {
+    if (!aiSuggestions.length) return null;
+    return (
+      <View style={styles.suggestionsWrapper}>
+        {aiSuggestions.map((s, i) => (
+          <TouchableOpacity key={`${i}-${s.slice(0,10)}`} style={styles.suggestionChip} onPress={() => setNewMessage(s)}>
+            <Text style={styles.suggestionChipText}>{s}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  };
+
   const renderHeader = () => (
     <View style={styles.header}>
       <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
@@ -420,32 +451,41 @@ const ChatScreen: React.FC = () => {
           }
         />
 
+        {/* AI Suggestions */}
+        {renderSuggestions()}
+
+        {/* Input bar */}
         <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.textInput}
-              value={newMessage}
+          <TouchableOpacity
+            onPress={async () => {
+              const suggestions = await getChatSuggestionsClient(otherUserId);
+              setAiSuggestions(suggestions);
+            }}
+            style={styles.sparkButton}
+            accessibilityLabel="Suggest replies"
+          >
+            <Ionicons name="sparkles-outline" size={22} color="#007AFF" />
+          </TouchableOpacity>
+          <TextInput
+            style={styles.textInput}
+            value={newMessage}
             onChangeText={(text) => {
               setNewMessage(text);
               handleTyping();
             }}
             placeholder="Type a message..."
-              placeholderTextColor="#999"
-              multiline
+            placeholderTextColor="#999"
+            multiline
             maxLength={500}
-            />
-            
-            <TouchableOpacity 
-            style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-            onPress={handleSendMessage}
-            disabled={!newMessage.trim() || sending}
-          >
+          />
+          <TouchableOpacity onPress={handleSendMessage} disabled={sending} style={styles.sendButton}>
             {sending ? (
               <ActivityIndicator size="small" color="white" />
             ) : (
               <Ionicons name="send" size={20} color="white" />
             )}
-                  </TouchableOpacity>
-                </View>
+          </TouchableOpacity>
+        </View>
     </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -637,6 +677,31 @@ const styles = StyleSheet.create({
     backgroundColor: '#ccc',
     shadowOpacity: 0,
     elevation: 0,
+  },
+  suggestionsWrapper: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+  },
+  suggestionChip: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginHorizontal: 4,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  suggestionChipText: {
+    color: '#334155',
+    fontSize: 13,
+  },
+  sparkButton: {
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 
