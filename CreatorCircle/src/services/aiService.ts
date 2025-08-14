@@ -1,7 +1,7 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import app from '../config/firebase';
 
-const functions = getFunctions(app as any);
+const functions = getFunctions(app as any, 'us-central1');
 
 export async function getChatSuggestionsClient(otherUserId: string): Promise<string[]> {
 	try {
