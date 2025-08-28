@@ -319,7 +319,7 @@ export class ImageUtils {
   }
 
   /**
-   * Check if image is accessible by making a HEAD request
+   * Check if image is accessible by attempting to preload it
    */
   static async checkImageAccessibility(url: string): Promise<boolean> {
     if (!this.isValidImageUrl(url)) {
@@ -327,8 +327,9 @@ export class ImageUtils {
     }
 
     try {
-      const response = await fetch(url, { method: 'HEAD' });
-      return response.ok;
+      // Use Image.prefetch instead of fetch for better React Native compatibility
+      const success = await Image.prefetch(url);
+      return success;
     } catch (error) {
       console.error('Image accessibility check failed:', error);
       return false;

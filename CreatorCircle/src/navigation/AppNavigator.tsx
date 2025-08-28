@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import AnimatedTabBar from '../components/AnimatedTabBar';
 import { ScrollProvider } from '../contexts/ScrollContext';
+import { navigationRef } from './navigationRef';
 
 import { useAuth } from '../contexts/AuthContext';
 import LoginScreen from '../screens/LoginScreen';
@@ -16,8 +17,6 @@ import PostScreen from '../screens/PostScreen';
 import PostViewScreen from '../screens/PostViewScreen';
 import MoreScreen from '../screens/MoreScreen';
 import UserProfileScreen from '../screens/UserProfileScreen';
-import ChatListScreen from '../screens/ChatListScreen';
-import ChatScreen from '../screens/ChatScreen';
 import CollaborationRequestsScreen from '../screens/CollaborationRequestsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import PlatformCompatibilityTest from '../components/PlatformCompatibilityTest';
@@ -28,6 +27,12 @@ import NearbyCreatorsScreen from '../screens/NearbyCreatorsScreen';
 import { RootStackParamList } from '../types';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
 import LocationSettingsScreen from '../screens/LocationSettingsScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import MessagesListScreen from '../screens/MessagesListScreen';
+import ChatWindowScreen from '../screens/ChatWindowScreen';
+import SpotlightScreen from '../screens/SpotlightScreen';
+import CreateSpotlightScreen from '../screens/CreateSpotlightScreen';
+import SpotlightDemo from '../components/SpotlightDemo';
 
 const Stack = createStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -63,16 +68,24 @@ const AppNavigator = () => {
 
   return (
     <ScrollProvider>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           {user ? (
             <>
               <Stack.Screen name="Main" component={MainTabNavigator} />
-              <Stack.Screen name="UserProfile" component={UserProfileScreen} />
-              <Stack.Screen name="PostView" component={PostViewScreen} />
-              <Stack.Screen name="ChatList" component={ChatListScreen} />
-              <Stack.Screen name="Chat" component={ChatScreen} />
-              <Stack.Screen name="CollaborationRequests" component={CollaborationRequestsScreen} />
+                              <Stack.Screen name="UserProfile" component={UserProfileScreen} />
+                <Stack.Screen name="PostView" component={PostViewScreen} />
+                <Stack.Screen 
+                  name="MessagesList" 
+                  component={MessagesListScreen}
+                  options={{ title: 'Messages' }}
+                />
+                <Stack.Screen 
+                  name="ChatWindow" 
+                  component={ChatWindowScreen}
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen name="CollaborationRequests" component={CollaborationRequestsScreen} />
               <Stack.Screen name="Notifications" component={NotificationsScreen} />
               <Stack.Screen name="PlatformTest" component={PlatformCompatibilityTest} />
               <Stack.Screen name="AvatarDemo" component={AvatarDemo} />
@@ -80,9 +93,13 @@ const AppNavigator = () => {
               <Stack.Screen name="NearbyCreators" component={NearbyCreatorsScreen} />
               <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
               <Stack.Screen name="LocationSettings" component={LocationSettingsScreen} />
+              <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="RoomsList" component={require('../screens/RoomsListScreen').default} />
               <Stack.Screen name="CreateRoom" component={require('../screens/CreateRoomScreen').default} />
               <Stack.Screen name="RoomChat" component={require('../screens/RoomChatScreen').default} />
+              <Stack.Screen name="Spotlight" component={SpotlightScreen} />
+              <Stack.Screen name="CreateSpotlight" component={CreateSpotlightScreen} />
+              <Stack.Screen name="SpotlightDemo" component={SpotlightDemo} />
             </>
           ) : (
             <Stack.Screen name="Auth" component={AuthStack} />

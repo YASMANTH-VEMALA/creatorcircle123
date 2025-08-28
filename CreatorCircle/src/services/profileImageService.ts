@@ -4,6 +4,45 @@ import { Platform } from 'react-native';
 
 export class ProfileImageService {
   /**
+   * Upload a general image to Firebase Storage
+   */
+  static async uploadImage(uri: string, folder: string): Promise<string> {
+    try {
+      console.log(`📤 Uploading image to ${folder} folder...`);
+      
+      // Convert URI to blob
+      const response = await fetch(uri);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      if (!blob || blob.size === 0) {
+        throw new Error('Invalid or empty image blob');
+      }
+      
+      // Create unique filename
+      const timestamp = Date.now();
+      const fileExtension = uri.split('.').pop() || 'jpg';
+      const fileName = `image_${timestamp}.${fileExtension}`;
+      const storagePath = `${folder}/${fileName}`;
+      
+      // Upload to Firebase Storage
+      const storageRef = ref(storage, storagePath);
+      await uploadBytes(storageRef, blob);
+      
+      // Get public download URL
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      console.log(`✅ Image uploaded successfully to ${folder}: ${downloadURL}`);
+      return downloadURL;
+    } catch (error) {
+      console.error(`❌ Error uploading image to ${folder}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Upload a single profile image to Firebase Storage
    */
   static async uploadProfileImage(uri: string, userId: string, type: 'profile' | 'banner'): Promise<string> {

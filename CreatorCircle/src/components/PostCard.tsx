@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,13 +15,15 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 import { useAuth } from '../contexts/AuthContext';
-import { Post, Comment, Report } from '../types';
+import { Post, Comment, Report, RootStackParamList } from '../types';
 import { PostService } from '../services/postService';
 import { UserService } from '../services/userService';
 import { ProfileValidationService } from '../services/profileValidationService';
 import PostImageStack from './PostImageStack';
 import PostEditModal from './PostEditModal';
+import PostTextComponent from './PostTextComponent';
 import { ImageUtils } from '../utils/imageUtils';
 import { Video, ResizeMode } from 'expo-av';
 import { Avatar } from './ui/Avatar';
@@ -31,6 +33,18 @@ import { notificationService } from '../services/notificationService';
 
 const { width } = Dimensions.get('window');
 
+// LinkedIn-style reaction options
+const REACTION_OPTIONS = [
+  { emoji: '👍', name: 'Like', color: '#0077B5' },
+  { emoji: '🎉', name: 'Celebrate', color: '#FF6B35' },
+  { emoji: '❤️', name: 'Love', color: '#E31B23' },
+  { emoji: '🤔', name: 'Insightful', color: '#8E44AD' },
+  { emoji: '😂', name: 'Funny', color: '#F39C12' },
+  { emoji: '🙏', name: 'Support', color: '#27AE60' },
+];
+
+type PostCardNavigationProp = StackNavigationProp<RootStackParamList>;
+
 interface PostCardProps {
   post: Post;
   onPostUpdate: () => void;
@@ -38,18 +52,21 @@ interface PostCardProps {
   isInProfile?: boolean;
 }
 
-const PostCard: React.FC<PostCardProps> = ({ 
+const PostCard: React.FC<PostCardProps> = React.memo(({ 
   post, 
   onPostUpdate, 
   showUserProfile = true,
   isInProfile = false 
 }) => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<PostCardNavigationProp>();
   const { user } = useAuth();
   
   // State management
   const [likesCount, setLikesCount] = useState(post.likes || 0);
   const [hasLiked, setHasLiked] = useState(false);
+  const [userReaction, setUserReaction] = useState<string | null>(null);
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const [reactions, setReactions] = useState<{ [emoji: string]: number }>({});
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
@@ -65,61 +82,131 @@ const PostCard: React.FC<PostCardProps> = ({
   const [fullscreenImageErrors, setFullscreenImageErrors] = useState<{ [key: number]: boolean }>({});
   const [avatarError, setAvatarError] = useState(false);
   const [userVerifiedBadge, setUserVerifiedBadge] = useState<'none' | 'silver' | 'gold'>('none');
+  // New state for comment replies and likes
+  const [replyingToComment, setReplyingToComment] = useState<Comment | null>(null);
+  const [commentLikes, setCommentLikes] = useState<{ [commentId: string]: boolean }>({});
+  const [commentLikesCount, setCommentLikesCount] = useState<{ [commentId: string]: number }>({});
 
+  // Memoize the post ID to prevent unnecessary re-renders
+  const postId = useMemo(() => post.id, [post.id]);
+  const postUserId = useMemo(() => post.userId, [post.userId]);
+
+  // Debug effect to track reaction picker state
   useEffect(() => {
-    if (user?.uid) {
+    console.log('🎯 Reaction picker state changed:', showReactionPicker);
+  }, [showReactionPicker]);
+
+  // Consolidated initialization effect
+  useEffect(() => {
+    if (user?.uid && postId) {
       initializePost();
     }
-  }, [user, post.id]);
+  }, [user?.uid, postId]);
 
-  const initializePost = async () => {
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      // setIsOptimisticUpdate(false); // Removed
+      // setIsCommentOptimisticUpdate({}); // Removed
+    };
+  }, []);
+
+  // Real-time updates effect
+  useEffect(() => {
+    if (postId) {
+      const unsubscribe = PostService.subscribeToPostUpdates(postId, (updates) => {
+        // Only update if the server data is different from our current state
+        // This prevents conflicts with optimistic updates
+        if (updates.likes !== likesCount) {
+          setLikesCount(updates.likes);
+        }
+        if (updates.reactions) {
+          setReactions(updates.reactions);
+        }
+        if (onPostUpdate) {
+          onPostUpdate();
+        }
+      });
+      
+      return unsubscribe;
+    }
+  }, [postId, onPostUpdate, likesCount]);
+
+  const initializePost = useCallback(async () => {
+    if (!user?.uid || !postId) return;
+
     try {
-      // Load user profile for the post creator
+      // Load user's reaction for this post
+      const userReactionData = await PostService.getUserReaction(postId, user.uid);
+      setUserReaction(userReactionData);
+      setHasLiked(!!userReactionData);
+
+      // Load post reactions
+      const reactionsData = await PostService.getPostReactions(postId);
+      setReactions(reactionsData);
+
+      // Load other post data
       await loadUserProfile();
-      
-      // Check if current user has liked this post
       await checkLikeStatus();
-      
-      // Load comments
       await loadComments();
     } catch (error) {
       console.error('Error initializing post:', error);
     }
-  };
+  }, [user?.uid, postId]);
 
-  const loadUserProfile = async () => {
+  const loadUserProfile = useCallback(async () => {
     try {
-      const profile = await UserService.getUserProfile(post.userId);
+      const profile = await UserService.getUserProfile(postUserId);
       setUserProfile(profile);
       
       // Load user's verified badge
-      const verifiedBadge = await PremiumService.getUserVerifiedBadge(post.userId);
+      const verifiedBadge = await PremiumService.getUserVerifiedBadge(postUserId);
       setUserVerifiedBadge(verifiedBadge);
-      console.log(`🏆 Post ${post.id} - User ${post.userId} verified badge:`, verifiedBadge);
     } catch (error) {
       console.error('Error loading user profile:', error);
     }
-  };
+  }, [postUserId]);
 
-  const checkLikeStatus = async () => {
+  const checkLikeStatus = useCallback(async () => {
     if (!user?.uid) return;
     
     try {
-      const liked = await PostService.hasUserLiked(post.id, user.uid);
+      const liked = await PostService.hasUserLiked(postId, user.uid);
       setHasLiked(liked);
     } catch (error) {
-      console.error('Error checking like status:', error);
+      console.error('❌ Error checking like status:', error);
     }
-  };
+  }, [user?.uid, postId]);
 
-  const loadComments = async () => {
+  const loadComments = useCallback(async () => {
     if (!user?.uid) return;
     
     try {
       setLoadingComments(true);
-      const unsubscribe = PostService.subscribeToComments(post.id, (newComments) => {
+      const unsubscribe = PostService.subscribeToComments(postId, (newComments) => {
         setComments(newComments);
+        
+        // Initialize comment likes state
+        const likesState: { [commentId: string]: boolean } = {};
+        const likesCountState: { [commentId: string]: number } = {};
+        
+        newComments.forEach(comment => {
+          likesState[comment.id] = false; // Will be updated below
+          likesCountState[comment.id] = comment.likes || 0;
+        });
+        
+        setCommentLikesCount(likesCountState);
         setLoadingComments(false);
+        
+        // Check like status for each comment
+        newComments.forEach(async (comment) => {
+          try {
+            const commentLiked = await PostService.hasUserLikedComment(postId, comment.id, user.uid);
+            setCommentLikes(prev => ({ ...prev, [comment.id]: commentLiked }));
+          } catch (error) {
+            console.error('Error checking comment like status:', error);
+          }
+        });
       });
       
       return unsubscribe;
@@ -127,29 +214,186 @@ const PostCard: React.FC<PostCardProps> = ({
       console.error('Error loading comments:', error);
       setLoadingComments(false);
     }
-  };
+  }, [user?.uid, postId]);
 
-  const handleLike = async () => {
+  const handleReaction = async (reactionEmoji: string) => {
     if (!user?.uid || isLiking) return;
+    
+    // Store current state for potential rollback
+    const previousReaction = userReaction;
+    const previousReactions = { ...reactions };
+    const previousLikesCount = likesCount;
     
     try {
       setIsLiking(true);
-      await PostService.toggleLike(post.id, user.uid);
       
-      // Update local state
-      setLikesCount(prev => hasLiked ? prev - 1 : prev + 1);
-      setHasLiked(!hasLiked);
-
-      // Notify post owner if not self-like
-      if (post.userId !== user.uid) {
-        await notificationService.createLikeNotification(user.uid, post.userId, post.id);
+      // Instant optimistic update
+      if (userReaction === reactionEmoji) {
+        // Remove reaction if same emoji is selected
+        setUserReaction(null);
+        setHasLiked(false);
+        setReactions(prev => ({
+          ...prev,
+          [reactionEmoji]: Math.max(0, (prev[reactionEmoji] || 0) - 1)
+        }));
+        setLikesCount(prev => Math.max(0, prev - 1));
+      } else {
+        // Add new reaction or change reaction
+        if (userReaction) {
+          // Remove previous reaction
+          setReactions(prev => ({
+            ...prev,
+            [userReaction]: Math.max(0, (prev[userReaction] || 0) - 1)
+          }));
+        } else {
+          // New reaction
+          setLikesCount(prev => prev + 1);
+        }
+        
+        // Add new reaction
+        setUserReaction(reactionEmoji);
+        setHasLiked(true);
+        setReactions(prev => ({
+          ...prev,
+          [reactionEmoji]: (prev[reactionEmoji] || 0) + 1
+        }));
       }
+      
+      // Perform the actual reaction operation
+      await PostService.toggleReaction(postId, user.uid, reactionEmoji);
+      
+      // Server operation successful - now handle XP and notifications
+      if (postUserId !== user.uid && userReaction !== reactionEmoji) {
+        try {
+          if (reactionEmoji !== userReaction) {
+            // User just reacted to the post
+            console.log('🎯 Reaction successful - awarding XP to post owner');
+            await xpService.awardForLike(postUserId);
+            
+            // Send notification for the reaction
+            await notificationService.createLikeNotification(user.uid, postUserId, postId);
+            console.log('📱 Reaction notification sent successfully');
+          }
+        } catch (xpError) {
+          console.warn('XP operation failed, but reaction action succeeded:', xpError);
+        }
+      }
+      
+      console.log('✅ Reaction action completed successfully');
+      
     } catch (error) {
-      console.error('Error toggling like:', error);
-      Alert.alert('Error', 'Failed to update like. Please try again.');
+      console.error('❌ Reaction action failed:', error);
+      
+      // Rollback optimistic updates on error
+      setUserReaction(previousReaction);
+      setReactions(previousReactions);
+      setHasLiked(!!previousReaction);
+      setLikesCount(previousLikesCount);
+      
+      // Show error message to user
+      Alert.alert(
+        'Error', 
+        'Failed to update reaction. Please try again.',
+        [{ text: 'OK' }]
+      );
     } finally {
       setIsLiking(false);
+      setShowReactionPicker(false);
     }
+  };
+
+  const handleLongPress = () => {
+    console.log('🔥 Long press detected - showing reaction picker');
+    console.log('Current showReactionPicker state:', showReactionPicker);
+    setShowReactionPicker(true);
+    console.log('Set showReactionPicker to true');
+  };
+
+  const handleQuickReaction = () => {
+    console.log('👆 Quick tap - using default like reaction');
+    handleReaction('👍');
+  };
+
+  const handlePressIn = () => {
+    console.log('👇 Press in detected');
+  };
+
+  const handlePressOut = () => {
+    console.log('👆 Press out detected');
+  };
+
+  const handleCommentLike = async (comment: Comment) => {
+    if (!user?.uid) return;
+    
+    // Store current state for potential rollback
+    const currentLiked = commentLikes[comment.id] || false;
+    const currentCount = commentLikesCount[comment.id] || 0;
+    const previousLiked = currentLiked;
+    const previousCount = currentCount;
+    
+    try {
+      // Instant optimistic update for better UX
+      setCommentLikes(prev => ({ ...prev, [comment.id]: !currentLiked }));
+      setCommentLikesCount(prev => ({ 
+        ...prev, 
+        [comment.id]: currentLiked ? currentCount - 1 : currentCount + 1 
+      }));
+      
+      // Perform the actual comment like/unlike operation
+      await PostService.toggleCommentLike(postId, comment.id, user.uid);
+      
+      // Server operation successful - now handle XP and notifications
+      if (comment.userId !== user.uid) {
+        try {
+          if (!currentLiked) {
+            // User just liked the comment
+            console.log('🎯 Comment like successful - awarding XP to comment owner');
+            await xpService.awardForCommentLike(comment.userId);
+            
+            // Send notification for the comment like
+            await notificationService.createCommentLikeNotification(
+              user.uid, 
+              comment.userId, 
+              postId, 
+              comment.id
+            );
+            console.log('📱 Comment like notification sent successfully');
+          } else {
+            // User just unliked the comment
+            console.log('🎯 Comment unlike successful - deducting XP from comment owner');
+            await xpService.deductForCommentUnlike(comment.userId);
+            console.log('📉 XP deducted for comment unlike');
+          }
+        } catch (xpError) {
+          console.warn('Comment XP operation failed, but like action succeeded:', xpError);
+          // XP failure shouldn't break the like functionality
+        }
+      }
+      
+      console.log('✅ Comment like action completed successfully');
+      
+    } catch (error) {
+      console.error('❌ Comment like action failed:', error);
+      
+      // Rollback optimistic updates on error
+      setCommentLikes(prev => ({ ...prev, [comment.id]: previousLiked }));
+      setCommentLikesCount(prev => ({ 
+        ...prev, 
+        [comment.id]: previousCount 
+      }));
+      
+      // Show error message to user
+      Alert.alert(
+        'Error', 
+        'Failed to update comment like. Please try again.',
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
+  const handleReplyToComment = (comment: Comment) => {
+    setReplyingToComment(comment);
+    setNewComment(`@${comment.userName} `);
   };
 
   const handleAddComment = async () => {
@@ -171,7 +415,7 @@ const PostCard: React.FC<PostCardProps> = ({
           { text: 'OK' },
           { 
             text: 'Complete Profile', 
-            onPress: () => navigation.navigate('Profile' as never)
+            onPress: () => navigation.navigate('Profile')
           }
         ]);
         return;
@@ -182,15 +426,47 @@ const PostCard: React.FC<PostCardProps> = ({
         return;
       }
 
+      // Remove @username prefix if replying
+      let cleanComment = newComment.trim();
+      let replyToCommentId: string | undefined;
+      let replyToUserName: string | undefined;
+      
+      if (replyingToComment) {
+        cleanComment = cleanComment.replace(`@${replyingToComment.userName} `, '');
+        replyToCommentId = replyingToComment.id;
+        replyToUserName = replyingToComment.userName;
+      }
+
       await PostService.addComment(
-        post.id,
+        postId,
         user.uid,
         userProfile.name || user.email || 'Anonymous',
         userProfile.profilePhotoUrl || '',
-        newComment.trim()
+        cleanComment,
+        replyToCommentId,
+        replyToUserName
       );
 
       setNewComment('');
+      setReplyingToComment(null);
+      
+      // Notify post owner if not self-comment
+      if (postUserId !== user.uid) {
+        await notificationService.createCommentNotification(user.uid, postUserId, postId, cleanComment);
+      }
+      
+      // Notify comment owner if replying to someone else's comment
+      if (replyingToComment && replyingToComment.userId !== user.uid) {
+        await notificationService.createCommentReplyNotification(
+          user.uid,
+          replyingToComment.userId,
+          postId,
+          replyingToComment.id,
+          replyingToComment.content,
+          cleanComment
+        );
+      }
+      
       Alert.alert('Success', 'Comment added successfully!');
     } catch (error) {
       console.error('Error adding comment:', error);
@@ -227,7 +503,7 @@ const PostCard: React.FC<PostCardProps> = ({
       }
 
       await PostService.reportPost(
-        post.id,
+        postId,
         user.uid,
         userProfile.name || user.email || 'Anonymous',
         reason
@@ -287,9 +563,9 @@ const PostCard: React.FC<PostCardProps> = ({
 
   const handleUserPress = () => {
     if (post.userId === user?.uid) {
-      navigation.navigate('Profile' as never);
+      navigation.navigate('Profile');
     } else {
-      navigation.navigate('UserProfile' as never, { userId: post.userId } as never);
+      navigation.navigate('UserProfile', { userId: post.userId });
     }
   };
 
@@ -483,7 +759,7 @@ const PostCard: React.FC<PostCardProps> = ({
   };
 
   const handleAvatarLoad = () => {
-    console.log(`✅ PostCard userAvatar loaded for post ${post.id}: ${post.userAvatar || userProfile?.profileImage}`);
+    console.log(`✅ PostCard userAvatar loaded for post ${post.id}: ${post.userAvatar || userProfile?.profilePhotoUrl}`);
     setAvatarError(false);
     ImageUtils.getImageSuccessHandler('PostCard-userAvatar')();
   };
@@ -493,7 +769,7 @@ const PostCard: React.FC<PostCardProps> = ({
       return { uri: 'https://via.placeholder.com/40x40/007AFF/FFFFFF?text=U' };
     }
     
-    const avatarUrl = post.userAvatar || userProfile?.profileImage || '';
+    const avatarUrl = post.userAvatar || userProfile?.profilePhotoUrl || '';
     return ImageUtils.getImageSource(avatarUrl, { cache: 'force-cache' });
   };
 
@@ -537,8 +813,51 @@ const PostCard: React.FC<PostCardProps> = ({
 
       {/* Post Content */}
       <View style={styles.content}>
-        {post.content && <Text style={styles.postText}>{post.content}</Text>}
-        {post.emoji && <Text style={styles.emoji}>{post.emoji}</Text>}
+        {post.content && (
+          <PostTextComponent
+            content={post.content}
+            maxLines={3}
+            maxCharacters={120}
+            style={styles.postContent}
+            onHashtagPress={(hashtag) => {
+              // Navigate to hashtag search or page
+              console.log('Hashtag tapped:', hashtag);
+              // You can add navigation logic here
+              // navigation.navigate('HashtagSearch', { hashtag });
+            }}
+            onMentionPress={(mention) => {
+              // Navigate to user profile
+              const username = mention.substring(1); // Remove @ symbol
+              console.log('Mention tapped:', username);
+              
+              // Find the user in the post and navigate to their profile
+              // This would require additional logic to map mentions to user IDs
+              // For now, we'll just log the mention
+              // You can implement user lookup logic here
+            }}
+          />
+        )}
+
+        {/* Reactions Display */}
+        {Object.keys(reactions).length > 0 && (
+          <View style={styles.reactionsDisplay}>
+            {Object.entries(reactions)
+              .filter(([_, count]) => count > 0)
+              .sort(([_, a], [__, b]) => b - a)
+              .slice(0, 3) // Show top 3 reactions
+              .map(([emoji, count]) => (
+                <View key={emoji} style={styles.reactionItem}>
+                  <Text style={styles.reactionEmojiSmall}>{emoji}</Text>
+                  <Text style={styles.reactionCount}>{count}</Text>
+                </View>
+              ))}
+            {Object.values(reactions).reduce((sum, count) => sum + count, 0) > 0 && (
+              <Text style={styles.totalReactions}>
+                {Object.values(reactions).reduce((sum, count) => sum + count, 0)} reactions
+              </Text>
+            )}
+          </View>
+        )}
         
         {/* Media with Fullscreen Support */}
         {getCombinedMedia().length > 0 && (
@@ -557,17 +876,38 @@ const PostCard: React.FC<PostCardProps> = ({
 
       {/* Action Buttons */}
       <View style={styles.actions}>
+        {/* Like Button */}
         <TouchableOpacity 
-          style={[styles.actionButton, isLiking && styles.actionButtonDisabled]} 
-          onPress={handleLike}
+          style={[styles.actionButton, hasLiked && styles.likedButton]} 
+          onPress={handleQuickReaction}
+          onLongPress={handleLongPress}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          delayLongPress={500}
           disabled={isLiking}
+          activeOpacity={0.7}
         >
-          <Ionicons
-            name={hasLiked ? "heart" : "heart-outline"}
-            size={20}
-            color={hasLiked ? "#FF3B30" : "#666"}
-          />
-          <Text style={[styles.actionText, hasLiked && styles.likedText]}>{likesCount}</Text>
+          {isLiking ? (
+            <ActivityIndicator size="small" color={hasLiked ? "#007AFF" : "#666"} />
+          ) : (
+            <>
+              <Text style={styles.reactionEmoji}>
+                {userReaction || '👍'}
+              </Text>
+              <Text style={[styles.actionText, hasLiked && styles.likedText]}>{likesCount}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        {/* Debug: Manual Reaction Picker Button */}
+        <TouchableOpacity 
+          style={styles.debugReactionButton}
+          onPress={() => {
+            console.log('🐛 Debug button pressed - opening reaction picker');
+            setShowReactionPicker(true);
+          }}
+        >
+          <Text style={styles.debugButtonText}>+</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionButton} onPress={() => setShowComments(!showComments)}>
@@ -619,10 +959,60 @@ const PostCard: React.FC<PostCardProps> = ({
                       <Text style={styles.commentUserName}>{item.userName || 'Unknown User'}</Text>
                       {/* Note: We'll need to load verified badges for comment authors separately */}
                     </View>
-                    <Text style={styles.commentText}>{item.content}</Text>
-                    <Text style={styles.commentTimestamp}>
-                      {formatTimestamp(item.createdAt)}
-                    </Text>
+                    
+                    {/* Show reply indicator if this is a reply */}
+                    {item.replyToUserName && (
+                      <Text style={styles.replyIndicator}>
+                        Replying to @{item.replyToUserName}
+                      </Text>
+                    )}
+                    
+                    <PostTextComponent
+                      content={item.content}
+                      maxLines={2}
+                      maxCharacters={80}
+                      style={styles.commentText}
+                      onHashtagPress={(hashtag) => {
+                        console.log('Comment hashtag tapped:', hashtag);
+                      }}
+                      onMentionPress={(mention) => {
+                        const username = mention.substring(1);
+                        console.log('Comment mention tapped:', username);
+                      }}
+                    />
+                    
+                    <View style={styles.commentActions}>
+                      <Text style={styles.commentTimestamp}>
+                        {formatTimestamp(item.createdAt)}
+                      </Text>
+                      
+                      {/* Comment like button */}
+                      <TouchableOpacity 
+                        style={styles.commentLikeButton}
+                        onPress={() => handleCommentLike(item)}
+                      >
+                        <Ionicons 
+                          name={commentLikes[item.id] ? "heart" : "heart-outline"} 
+                          size={16} 
+                    color={commentLikes[item.id] ? "#007AFF" : "#666"} 
+                        />
+                        <Text style={[
+                          styles.commentLikeText,
+                    { color: commentLikes[item.id] ? "#007AFF" : "#666" }
+                        ]}>
+                          {commentLikesCount[item.id] || 0}
+                        </Text>
+                      </TouchableOpacity>
+                      
+                      {/* Reply button */}
+                      <TouchableOpacity 
+                        style={styles.commentReplyButton}
+                        onPress={() => handleReplyToComment(item)}
+                      >
+                        <Ionicons name="chatbubble-outline" size={16} color="#666" />
+                        <Text style={styles.commentReplyText}>Reply</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
               )}
@@ -632,9 +1022,22 @@ const PostCard: React.FC<PostCardProps> = ({
           
           {/* Add Comment */}
           <View style={styles.addCommentContainer}>
+            {replyingToComment && (
+              <View style={styles.replyingToContainer}>
+                <Text style={styles.replyingToText}>
+                  Replying to @{replyingToComment.userName}
+                </Text>
+                <TouchableOpacity 
+                  onPress={() => setReplyingToComment(null)}
+                  style={styles.cancelReplyButton}
+                >
+                  <Ionicons name="close" size={16} color="#666" />
+                </TouchableOpacity>
+              </View>
+            )}
             <TextInput
               style={styles.commentInput}
-              placeholder="Add a comment..."
+              placeholder={replyingToComment ? `Reply to @${replyingToComment.userName}...` : "Add a comment..."}
               value={newComment}
               onChangeText={setNewComment}
               multiline
@@ -675,14 +1078,14 @@ const PostCard: React.FC<PostCardProps> = ({
               <Text style={styles.optionText}>Edit Post</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.optionButton} onPress={handleDelete}>
-              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-              <Text style={[styles.optionText, { color: '#FF3B30' }]}>Delete Post</Text>
+                              <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
+                <Text style={[styles.optionText, { color: '#FF6B6B' }]}>Delete Post</Text>
             </TouchableOpacity>
               </>
             ) : (
               <TouchableOpacity style={styles.optionButton} onPress={handleReport}>
-                <Ionicons name="flag-outline" size={20} color="#FF3B30" />
-                <Text style={[styles.optionText, { color: '#FF3B30' }]}>Report Post</Text>
+                <Ionicons name="flag-outline" size={20} color="#FF9500" />
+                <Text style={[styles.optionText, { color: '#FF9500' }]}>Report Post</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -699,9 +1102,49 @@ const PostCard: React.FC<PostCardProps> = ({
 
       {/* Fullscreen Image Modal */}
       {renderFullscreenImage()}
+
+      {/* Reaction Picker Modal */}
+      <Modal
+        visible={showReactionPicker}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowReactionPicker(false)}
+        statusBarTranslucent={true}
+      >
+        <TouchableOpacity
+          style={styles.reactionPickerOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            console.log('🚫 Closing reaction picker');
+            setShowReactionPicker(false);
+          }}
+        >
+          <View style={styles.reactionPickerContainer}>
+            <Text style={styles.reactionPickerTitle}>Choose your reaction</Text>
+            <View style={styles.reactionPicker}>
+              {REACTION_OPTIONS.map((reaction) => (
+                <TouchableOpacity
+                  key={reaction.emoji}
+                  style={[
+                    styles.reactionOption,
+                    userReaction === reaction.emoji && styles.selectedReaction
+                  ]}
+                  onPress={() => {
+                    console.log('🎯 Reaction selected:', reaction.emoji, reaction.name);
+                    handleReaction(reaction.emoji);
+                  }}
+                >
+                  <Text style={styles.reactionOptionEmoji}>{reaction.emoji}</Text>
+                  <Text style={styles.reactionOptionName}>{reaction.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -753,17 +1196,18 @@ const styles = StyleSheet.create({
     color: '#999',
   },
   content: {
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  postText: {
+  postContent: {
     fontSize: 16,
-    color: '#333',
     lineHeight: 24,
-    marginBottom: 12,
+    color: '#333',
+    marginBottom: 8,
   },
   emoji: {
     fontSize: 24,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   mediaContainer: {
     borderRadius: 12,
@@ -793,8 +1237,16 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   likedText: {
-    color: '#FF3B30',
+    color: '#007AFF',
     fontWeight: '600',
+  },
+  likedButton: {
+    backgroundColor: '#E3F2FD',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
   },
   commentsSection: {
     marginTop: 16,
@@ -855,6 +1307,58 @@ const styles = StyleSheet.create({
   commentTimestamp: {
     fontSize: 12,
     color: '#999',
+  },
+  replyIndicator: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+    fontStyle: 'italic',
+  },
+  commentActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  commentLikeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 16,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  commentLikeText: {
+    marginLeft: 4,
+    fontSize: 12,
+    color: '#666',
+  },
+  commentReplyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  commentReplyText: {
+    marginLeft: 4,
+    fontSize: 12,
+    color: '#666',
+  },
+  replyingToContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+  },
+  replyingToText: {
+    fontSize: 12,
+    color: '#666',
+    flex: 1,
+  },
+  cancelReplyButton: {
+    padding: 4,
   },
   addCommentContainer: {
     flexDirection: 'row',
@@ -997,6 +1501,110 @@ const styles = StyleSheet.create({
   },
   fullscreenIndicatorActive: {
     backgroundColor: 'white',
+  },
+  reactionEmoji: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  reactionPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  reactionPickerContainer: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  reactionPicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: 12,
+  },
+  reactionOption: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#f0f0f0',
+    width: '30%',
+    minHeight: 80,
+    backgroundColor: '#fafafa',
+  },
+  selectedReaction: {
+    borderColor: '#007AFF',
+    backgroundColor: '#E3F2FD',
+    borderWidth: 3,
+  },
+  reactionOptionEmoji: {
+    fontSize: 28,
+    marginBottom: 4,
+  },
+  reactionOptionName: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+  },
+  reactionsDisplay: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  reactionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 15,
+    marginBottom: 5,
+  },
+  reactionEmojiSmall: {
+    fontSize: 20,
+    marginRight: 5,
+  },
+  reactionCount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  totalReactions: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 5,
+  },
+  reactionPickerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  debugReactionButton: {
+    backgroundColor: '#f0f0f0',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  debugButtonText: {
+    fontSize: 24,
+    color: '#666',
   },
 });
 

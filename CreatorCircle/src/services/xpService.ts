@@ -48,8 +48,11 @@ function getTodayKey(): string {
 export type XpAction =
   | 'POST_CREATED'
   | 'POST_LIKED_RECEIVED'
+  | 'POST_UNLIKED'
   | 'COMMENT_CREATED'
   | 'COMMENT_RECEIVED'
+  | 'COMMENT_LIKED_RECEIVED'
+  | 'COMMENT_UNLIKED'
   | 'COLLAB_ACCEPTED'
   | 'COLLAB_SENT'
   | 'POST_REPORTED_VALID'
@@ -60,8 +63,11 @@ export type XpAction =
 const BASE_XP: Record<XpAction, number> = {
   POST_CREATED: 20,
   POST_LIKED_RECEIVED: 5,
+  POST_UNLIKED: -5,
   COMMENT_CREATED: 10,
   COMMENT_RECEIVED: 8,
+  COMMENT_LIKED_RECEIVED: 3,
+  COMMENT_UNLIKED: -3,
   COLLAB_ACCEPTED: 25,
   COLLAB_SENT: 15,
   POST_REPORTED_VALID: -30,
@@ -73,8 +79,11 @@ const BASE_XP: Record<XpAction, number> = {
 const DAILY_LIMITS: Partial<Record<XpAction, number>> = {
   POST_CREATED: 5,
   POST_LIKED_RECEIVED: 100,
+  POST_UNLIKED: 100,
   COMMENT_CREATED: 20,
   COMMENT_RECEIVED: 50,
+  COMMENT_LIKED_RECEIVED: 200,
+  COMMENT_UNLIKED: 200,
   COLLAB_SENT: 10,
   POST_SHARED: 5,
   LOGIN_DAILY: 1,
@@ -234,8 +243,12 @@ export class XpService {
 
   async awardForPostCreation(uid: string, metadata?: any) { return this.award(uid, 'POST_CREATED', metadata); }
   async awardForLikeReceived(postOwnerId: string) { return this.award(postOwnerId, 'POST_LIKED_RECEIVED'); }
+  async awardForLike(postOwnerId: string) { return this.award(postOwnerId, 'POST_LIKED_RECEIVED'); }
+  async deductForUnlike(postOwnerId: string) { return this.award(postOwnerId, 'POST_UNLIKED'); }
   async awardForComment(uid: string) { return this.award(uid, 'COMMENT_CREATED'); }
   async awardForCommentReceived(postOwnerId: string) { return this.award(postOwnerId, 'COMMENT_RECEIVED'); }
+  async awardForCommentLike(commentOwnerId: string) { return this.award(commentOwnerId, 'COMMENT_LIKED_RECEIVED'); }
+  async deductForCommentUnlike(commentOwnerId: string) { return this.award(commentOwnerId, 'COMMENT_UNLIKED'); }
   async awardForCollabAccepted(uid: string) { return this.award(uid, 'COLLAB_ACCEPTED'); }
   async awardForCollabSent(uid: string) { return this.award(uid, 'COLLAB_SENT'); }
   async deductForReport(uid: string) { return this.award(uid, 'POST_REPORTED_VALID'); }

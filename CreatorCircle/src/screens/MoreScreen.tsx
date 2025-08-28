@@ -16,6 +16,7 @@ import PremiumSubscriptionModal from '../components/PremiumSubscriptionModal';
 import { UserService } from '../services/userService';
 import { Avatar } from '../components/ui/Avatar';
 import NotificationIndicator from '../components/NotificationIndicator';
+import ChatCleanupButton from '../components/ChatCleanupButton';
 
 const MoreScreen: React.FC = () => {
   const { user, logout } = useAuth();
@@ -47,7 +48,7 @@ const MoreScreen: React.FC = () => {
   };
 
   const handleMessages = () => {
-    navigation.navigate('ChatList' as never);
+    navigation.navigate('MessagesList' as never);
   };
 
   const handleCollaborationRequests = () => {
@@ -72,6 +73,14 @@ const MoreScreen: React.FC = () => {
 
   const handleNearbyCreators = () => {
     navigation.navigate('NearbyCreators' as never);
+  };
+
+  const handleSpotlight = () => {
+    navigation.navigate('Spotlight' as never);
+  };
+
+  const handleSpotlightDemo = () => {
+    navigation.navigate('SpotlightDemo' as never);
   };
 
   // Reusable option item to keep icon + label left-aligned and chevron on the right
@@ -126,10 +135,11 @@ const MoreScreen: React.FC = () => {
             onPress={handleNotifications}
             rightElement={<NotificationIndicator size="small" showCount={false} />}
           />
-          <OptionItem icon="settings-outline" label="Location Settings" onPress={() => navigation.navigate('LocationSettings' as never)} />
+          <OptionItem icon="settings-outline" label="Settings" onPress={() => navigation.navigate('Settings' as never)} />
+          <OptionItem icon="location-outline" label="Location Settings" onPress={() => navigation.navigate('LocationSettings' as never)} />
           <OptionItem icon="help-circle-outline" label="Help & Support" onPress={() => {}} />
           <OptionItem icon="information-circle-outline" label="About" onPress={() => {}} />
-            </View>
+        </View>
 
         {/* Community Section */}
         <Text style={styles.sectionHeader}>Community</Text>
@@ -137,6 +147,8 @@ const MoreScreen: React.FC = () => {
           <OptionItem icon="people-outline" label="Collaboration Requests" onPress={handleCollaborationRequests} />
           <OptionItem icon="person-add-outline" label="Suggested People" onPress={handleSuggestedPeople} />
           <OptionItem icon="location-outline" label="Nearby Creators" onPress={handleNearbyCreators} />
+          <OptionItem icon="flash" label="Spotlight" onPress={handleSpotlight} />
+          <OptionItem icon="information-circle-outline" label="Spotlight Demo" onPress={handleSpotlightDemo} />
           <OptionItem icon="trophy-outline" label="Leaderboard" onPress={() => navigation.navigate('Leaderboard' as never)} />
           <OptionItem icon="people-outline" label="Collaborative Rooms" onPress={() => navigation.navigate('RoomsList' as never)} />
         </View>
@@ -145,6 +157,17 @@ const MoreScreen: React.FC = () => {
         <Text style={styles.sectionHeader}>Premium</Text>
         <View style={styles.optionsSection}>
           <OptionItem icon="star-outline" label="Premium Subscription" onPress={handleOpenPremiumModal} />
+        </View>
+
+        {/* Developer Tools */}
+        <Text style={styles.sectionHeader}>Developer Tools</Text>
+        <View style={styles.optionsSection}>
+          <View style={styles.cleanupSection}>
+            <Text style={styles.cleanupDescription}>
+              Remove all existing chat data to prepare for new chat system
+            </Text>
+            <ChatCleanupButton />
+          </View>
         </View>
       </ScrollView>
 
@@ -244,6 +267,17 @@ const styles = StyleSheet.create({
   },
   optionChevron: {
     marginLeft: 8,
+  },
+  cleanupSection: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  cleanupDescription: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 12,
+    maxWidth: 280,
   },
   sectionHeader: {
     fontSize: 14,

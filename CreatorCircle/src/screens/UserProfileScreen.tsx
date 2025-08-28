@@ -18,8 +18,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Profile, Post, SocialLink, SocialPlatform } from '../types';
 import { UserService } from '../services/userService';
 import { PostService } from '../services/postService';
-import { MessagingService } from '../services/messagingService';
 import { collaborationService } from '../services/collaborationService';
+import { NewChatService } from '../services/newChatService';
 import { ProfileValidationService } from '../services/profileValidationService';
 import PostCard from '../components/PostCard';
 import CollaborationRequestModal from '../components/CollaborationRequestModal';
@@ -31,6 +31,9 @@ import { Avatar } from '../components/ui/Avatar';
 import { Image } from 'expo-image';
 import { FollowService } from '../services/followService';
 import { useFollowersCount } from '../hooks/useFollowersCount';
+import { AIProfileSuggestions } from '../components/AIProfileSuggestions';
+import PremiumBannerCarousel from '../components/PremiumBannerCarousel';
+import { Banner } from '../types';
 
 type UserProfileRouteParams = {
   userId: string;
@@ -103,10 +106,28 @@ const UserProfileScreen: React.FC = () => {
   const [showCollaborationModal, setShowCollaborationModal] = useState(false);
   const [collaborationMessage, setCollaborationMessage] = useState('');
   const [isOwnProfile, setIsOwnProfile] = useState(false);
-  const [hasCollaborated, setHasCollaborated] = useState(false);
-  const [existingRequest, setExistingRequest] = useState<any>(null);
+  const [collaborationStatus, setCollaborationStatus] = useState<{
+    status: 'none' | 'pending' | 'accepted' | 'rejected';
+    requestId?: string;
+    isSender?: boolean;
+    message?: string;
+  } | null>(null);
   const [isFollowing, setIsFollowing] = useState<boolean>(false);
+  const [premiumBanners, setPremiumBanners] = useState<Banner[]>([]);
   const liveFollowersCount = useFollowersCount(profile?.uid);
+
+  const loadPremiumBanners = async () => {
+    if (!userId) return;
+    
+    try {
+      // Import the service dynamically to avoid circular dependencies
+      const { PremiumBannerService } = await import('../services/premiumBannerService');
+      const result = await PremiumBannerService.getUserBanners(userId);
+      setPremiumBanners(result.banners);
+    } catch (error) {
+      console.error('Error loading premium banners:', error);
+    }
+  };
 
   const loadUserProfile = async () => {
     try {
@@ -126,6 +147,12 @@ const UserProfileScreen: React.FC = () => {
         const userData = { id: userSnapshot.id, ...userSnapshot.data() } as Profile;
         console.log('User profile loaded successfully:', userData.name);
         setProfile(userData);
+        
+        // Load premium banners if user is verified
+        if (userData.verifiedBadge && userData.verifiedBadge !== 'none') {
+          loadPremiumBanners();
+        }
+        
         setLoading(false);
         
         // Check if this is the current user's profile
@@ -226,11 +253,14 @@ const UserProfileScreen: React.FC = () => {
       return;
     }
     
+    // For now, allow chat if users have collaborated or profile is complete
     try {
-      console.log('Checking chat permission for users:', user.uid, userId);
-      const canChatResult = await MessagingService.canUsersChat(user.uid, userId);
-      console.log('Chat permission result:', canChatResult);
-      setCanChat(canChatResult);
+      if (collaborationStatus?.status === 'accepted') {
+        setCanChat(true);
+      } else {
+        // Allow chat for all users - can be restricted later
+        setCanChat(true);
+      }
     } catch (error) {
       console.error('Error checking chat permission:', error);
       setCanChat(false);
@@ -239,28 +269,22 @@ const UserProfileScreen: React.FC = () => {
 
   const checkCollaborationStatus = async () => {
     if (!user || !userId || user.uid === userId) {
-      setHasCollaborated(false);
-      setExistingRequest(null);
+      setCollaborationStatus(null);
       return;
     }
     
     try {
-      // Check if users have collaborated
-      const collaborated = await collaborationService.haveUsersCollaborated(user.uid, userId);
-      setHasCollaborated(collaborated);
+      // Get comprehensive collaboration status
+      const status = await collaborationService.getCollaborationStatus(user.uid, userId);
+      setCollaborationStatus(status);
       
       // If collaborated, ensure chat is allowed
-      if (collaborated) {
+      if (status.status === 'accepted') {
         setCanChat(true);
       }
-      
-      // Check for existing request
-      const existing = await collaborationService.getExistingRequest(user.uid, userId);
-      setExistingRequest(existing);
     } catch (error) {
       console.error('Error checking collaboration status:', error);
-      setHasCollaborated(false);
-      setExistingRequest(null);
+      setCollaborationStatus(null);
     }
   };
 
@@ -357,28 +381,52 @@ const UserProfileScreen: React.FC = () => {
   const handleMessage = async () => {
     if (!user || !userId || !profile) return;
     
-    // If users have collaborated by any means, allow chat directly
-    if (!canChat && !hasCollaborated) {
-      Alert.alert(
-        'Collaboration Required',
-        'You need to collaborate with this user before you can message them.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Send Collaboration Request', onPress: () => setShowCollaborationModal(true) },
-        ]
-      );
-      return;
-    }
-    
     try {
-      const chatId = await MessagingService.getOrCreateChat(user.uid, userId);
-      navigation.navigate('Chat' as never, {
+      // Create or get existing chat
+      const chatId = await NewChatService.createOrGetChat(user.uid, userId);
+      
+      // Get other user info
+      const otherUser = await NewChatService.getUserProfile(userId);
+      if (!otherUser) {
+        Alert.alert('Error', 'Could not load user profile');
+        return;
+      }
+      
+      // Navigate to chat window
+      navigation.navigate('ChatWindow' as never, {
         chatId,
-        otherUserId: userId,
-        otherUserName: profile.name,
+        otherUser,
       } as never);
     } catch (error) {
-      console.error('Error creating chat:', error);
+      console.error('Error starting chat:', error);
+      Alert.alert('Error', 'Failed to start conversation');
+    }
+  };
+
+  const handleMessageWithSuggestion = async (suggestedMessage: string) => {
+    if (!user || !userId || !profile) return;
+    
+    try {
+      // Create or get existing chat
+      const chatId = await NewChatService.createOrGetChat(user.uid, userId);
+      
+      // Get other user info
+      const otherUser = await NewChatService.getUserProfile(userId);
+      if (!otherUser) {
+        Alert.alert('Error', 'Could not load user profile');
+        return;
+      }
+      
+      // Send the suggested message
+      await NewChatService.sendMessage(chatId, user.uid, userId, suggestedMessage);
+      
+      // Navigate to chat window
+      navigation.navigate('ChatWindow' as never, {
+        chatId,
+        otherUser,
+      } as never);
+    } catch (error) {
+      console.error('Error starting chat:', error);
       Alert.alert('Error', 'Failed to start conversation');
     }
   };
@@ -391,7 +439,7 @@ const UserProfileScreen: React.FC = () => {
       return;
     }
     
-    if (hasCollaborated) {
+    if (collaborationStatus?.status === 'accepted') {
       // Show un-collaborate option
       Alert.alert(
         'Remove Collaboration',
@@ -408,12 +456,17 @@ const UserProfileScreen: React.FC = () => {
       return;
     }
     
-    if (existingRequest) {
-      if (existingRequest.status === 'pending') {
+    if (collaborationStatus?.status === 'pending') {
+      if (collaborationStatus.isSender) {
         Alert.alert('Request Pending', 'You have already sent a collaboration request to this user.');
-      } else if (existingRequest.status === 'declined') {
-        Alert.alert('Request Declined', 'Your previous collaboration request was declined.');
+      } else {
+        Alert.alert('Request Pending', 'This user has already sent you a collaboration request.');
       }
+      return;
+    }
+
+    if (collaborationStatus?.status === 'rejected') {
+      Alert.alert('Request Rejected', 'Your previous collaboration request was rejected.');
       return;
     }
     
@@ -425,10 +478,6 @@ const UserProfileScreen: React.FC = () => {
     
     try {
       await collaborationService.removeCollaboration(user.uid, userId);
-      
-      // Update local state
-      setHasCollaborated(false);
-      setExistingRequest(null);
       
       Alert.alert('Success', 'Collaboration removed successfully!');
       
@@ -489,6 +538,52 @@ const UserProfileScreen: React.FC = () => {
     loadUserPosts();
   };
 
+  // Helper functions for collaboration status display
+  const getCollaborationIcon = () => {
+    if (!collaborationStatus) return 'people-outline';
+    
+    switch (collaborationStatus.status) {
+      case 'accepted':
+        return 'people';
+      case 'pending':
+        return 'time-outline';
+      case 'rejected':
+        return 'close-circle-outline';
+      default:
+        return 'people-outline';
+    }
+  };
+
+  const getCollaborationColor = () => {
+    if (!collaborationStatus) return '#007AFF';
+    
+    switch (collaborationStatus.status) {
+      case 'accepted':
+        return 'white';
+      case 'pending':
+        return '#FF9500';
+      case 'rejected':
+        return '#FF3B30';
+      default:
+        return '#007AFF';
+    }
+  };
+
+  const getCollaborationText = () => {
+    if (!collaborationStatus) return 'Collaborate';
+    
+    switch (collaborationStatus.status) {
+      case 'accepted':
+        return 'Collaborated';
+      case 'pending':
+        return collaborationStatus.isSender ? 'Pending...' : 'Respond';
+      case 'rejected':
+        return 'Rejected';
+      default:
+        return 'Collaborate';
+    }
+  };
+
   if (loading) {
     return (
       <CreatorCircleLoading 
@@ -521,7 +616,23 @@ const UserProfileScreen: React.FC = () => {
         {/* Banner and Profile Image */}
         <View style={styles.bannerSection}>
           {/* Banner Image */}
-          {profile.bannerPhotoUrl && (
+          {profile.verifiedBadge !== 'none' && premiumBanners.length > 0 ? (
+            // Premium rotating banners
+            <View style={styles.bannerContainer}>
+              <PremiumBannerCarousel
+                banners={premiumBanners}
+                height={200}
+                showIndicators={false}
+                showNavigation={false}
+                autoRotate={true}
+                onBannerPress={(banner) => {
+                  // Handle banner press if needed
+                  console.log('Banner pressed:', banner);
+                }}
+              />
+            </View>
+          ) : profile.bannerPhotoUrl ? (
+            // Regular single banner
             <View style={styles.bannerContainer}>
               <Image 
                 source={{ uri: profile.bannerPhotoUrl }} 
@@ -531,7 +642,7 @@ const UserProfileScreen: React.FC = () => {
                 transition={200}
               />
             </View>
-          )}
+          ) : null}
           {/* Profile Image - Overlapping the banner */}
           <View style={styles.profileImageContainer}>
             <Avatar
@@ -605,32 +716,37 @@ const UserProfileScreen: React.FC = () => {
               <TouchableOpacity 
                 style={[
                   styles.collaborateButton, 
-                  hasCollaborated && styles.collaboratedButton
+                  collaborationStatus?.status === 'accepted' && styles.collaboratedButton,
+                  collaborationStatus?.status === 'pending' && styles.pendingButton
                 ]} 
                 onPress={handleCollaborate}
               >
                 <Ionicons 
-                  name="people-outline" 
+                  name={getCollaborationIcon()} 
                   size={16} 
-                  color={hasCollaborated ? 'white' : '#007AFF'} 
+                  color={getCollaborationColor()} 
                 />
                 <Text style={[
                   styles.collaborateButtonText,
-                  hasCollaborated && styles.collaboratedButtonText
+                  collaborationStatus?.status === 'accepted' && styles.collaboratedButtonText,
+                  collaborationStatus?.status === 'pending' && styles.pendingText
                 ]}>
-                  {hasCollaborated 
-                    ? 'Collaborated' 
-                    : existingRequest 
-                      ? existingRequest.status === 'pending' 
-                        ? 'Pending' 
-                        : existingRequest.status === 'declined' 
-                          ? 'Declined' 
-                          : 'Collaborate'
-                      : 'Collaborate'
-                  }
+                  {getCollaborationText()}
                 </Text>
               </TouchableOpacity>
             </View>
+          )}
+
+          {/* AI Introduction Suggestions */}
+          {!isOwnProfile && (
+            <AIProfileSuggestions
+              targetProfile={profile}
+              currentUserId={user?.uid || ''}
+              onMessageSelect={(message) => {
+                // Navigate to chat with the selected message pre-filled
+                handleMessageWithSuggestion(message);
+              }}
+            />
           )}
         </View>
 
@@ -987,6 +1103,13 @@ const styles = StyleSheet.create({
   },
   collaboratedButtonText: {
     color: 'white',
+  },
+  pendingButton: {
+    backgroundColor: '#FFF8E1',
+    borderColor: '#FF9500',
+  },
+  pendingText: {
+    color: '#FF9500',
   },
   section: {
     backgroundColor: 'white',

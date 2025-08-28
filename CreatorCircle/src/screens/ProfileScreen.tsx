@@ -31,6 +31,10 @@ import { useScroll } from '../contexts/ScrollContext';
 import { collection, onSnapshot, query, orderBy, limit, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useFollowersCount } from '../hooks/useFollowersCount';
+import PremiumBannerCarousel from '../components/PremiumBannerCarousel';
+import PremiumBannerManager from '../components/PremiumBannerManager';
+import { PremiumBannerService } from '../services/premiumBannerService';
+import { Banner } from '../types';
 
 const { width } = Dimensions.get('window');
 
@@ -159,6 +163,9 @@ const ProfileScreen: React.FC = () => {
     completionPercentage: 0
   });
   const [verifiedBadge, setVerifiedBadge] = useState<'none' | 'silver' | 'gold'>('none');
+  // Premium banners state
+  const [premiumBanners, setPremiumBanners] = useState<Banner[]>([]);
+  const [showBannerManager, setShowBannerManager] = useState(false);
   // XP state
   const [xpLogs, setXpLogs] = useState<XpLogEntry[]>([]);
   const [showXpLog, setShowXpLog] = useState(false);
@@ -168,6 +175,7 @@ const ProfileScreen: React.FC = () => {
   useEffect(() => {
     if (user?.uid) {
       loadProfile();
+      loadPremiumBanners();
       subscribeToUserPosts();
       // Subscribe to XP logs
       const qxp = query(
@@ -247,6 +255,17 @@ const ProfileScreen: React.FC = () => {
       Alert.alert('Error', 'Failed to load profile');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadPremiumBanners = async () => {
+    if (!user?.uid) return;
+
+    try {
+      const result = await PremiumBannerService.getUserBanners(user.uid);
+      setPremiumBanners(result.banners);
+    } catch (error) {
+      console.error('Error loading premium banners:', error);
     }
   };
 
@@ -474,21 +493,47 @@ const ProfileScreen: React.FC = () => {
       scrollEventThrottle={16}
     >
       {/* Banner Image */}
-      <View style={styles.bannerContainer}>
-        {(
-          !!profile.bannerPhotoUrl
-            ? <Image source={{ uri: profile.bannerPhotoUrl }} style={styles.bannerImage} />
-            : <Image source={{ uri: ProfileImageService.getDefaultImageUrl('banner') }} style={styles.bannerImage} />
-        )}
-        {isEditing && (
-          <TouchableOpacity
-            style={styles.bannerEditButton}
-            onPress={() => pickImage('banner')}
-          >
-            <Ionicons name="camera-outline" size={20} color="white" />
-          </TouchableOpacity>
-        )}
-      </View>
+      {verifiedBadge !== 'none' && premiumBanners.length > 0 ? (
+        // Premium rotating banners
+        <View style={styles.bannerContainer}>
+          <PremiumBannerCarousel
+            banners={premiumBanners}
+            height={200}
+            showIndicators={false}
+            showNavigation={false}
+            autoRotate={true}
+            onBannerPress={(banner) => {
+              // Handle banner press if needed
+              console.log('Banner pressed:', banner);
+            }}
+          />
+          {isEditing && (
+            <TouchableOpacity
+              style={styles.bannerEditButton}
+              onPress={() => setShowBannerManager(true)}
+            >
+              <Ionicons name="settings-outline" size={20} color="white" />
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : (
+        // Regular single banner
+        <View style={styles.bannerContainer}>
+          {(
+            !!profile.bannerPhotoUrl
+              ? <Image source={{ uri: profile.bannerPhotoUrl }} style={styles.bannerImage} />
+              : <Image source={{ uri: ProfileImageService.getDefaultImageUrl('banner') }} style={styles.bannerImage} />
+          )}
+          {isEditing && (
+            <TouchableOpacity
+              style={styles.bannerEditButton}
+              onPress={() => pickImage('banner')}
+            >
+              <Ionicons name="camera-outline" size={20} color="white" />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Profile Section */}
       <View style={styles.profileSection}>
@@ -585,13 +630,26 @@ const ProfileScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => setIsEditing(true)}
-            >
-              <Ionicons name="create-outline" size={16} color="#007AFF" />
-              <Text style={styles.actionButtonText}>Edit Profile</Text>
-            </TouchableOpacity>
+            <View style={styles.profileActions}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => setIsEditing(true)}
+              >
+                <Ionicons name="create-outline" size={16} color="#007AFF" />
+                <Text style={styles.actionButtonText}>Edit Profile</Text>
+              </TouchableOpacity>
+              
+              {/* Premium Banner Management Button */}
+              {verifiedBadge !== 'none' && (
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.premiumButton]}
+                  onPress={() => setShowBannerManager(true)}
+                >
+                  <Ionicons name="images-outline" size={16} color="#FFD700" />
+                  <Text style={styles.premiumButtonText}>Manage Banners</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           )}
         </View>
       </View>
@@ -917,34 +975,29 @@ const ProfileScreen: React.FC = () => {
 
       {/* Posts Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>My Posts</Text>
-        {userPosts.length > 0 ? (
-          <FlatList
-            data={userPosts}
-            renderItem={renderPost}
-            keyExtractor={(item) => item.id}
-            scrollEnabled={false}
-            showsVerticalScrollIndicator={false}
-          />
+        <Text style={styles.sectionTitle}>Your Posts</Text>
+        {userPosts.length === 0 ? (
+          <Text style={styles.noPostsText}>No posts yet. Create your first post!</Text>
         ) : (
-          <View style={styles.emptyPostsContainer}>
-            <Ionicons name="newspaper-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyPostsTitle}>No Posts Yet</Text>
-            <Text style={styles.emptyPostsSubtitle}>
-              Start sharing your creativity with the community!
-            </Text>
-          </View>
+          userPosts.map((post) => (
+            <PostCard
+              key={post.id}
+              post={post}
+              onPostUpdate={handlePostUpdate}
+              showUserProfile={false}
+              isInProfile={true}
+            />
+          ))
         )}
       </View>
 
-      {/* Profile Completion Banner */}
-      {renderProfileCompletionBanner()}
-
-      {/* Logout Button */}
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
-        <Text style={styles.logoutText}>Logout</Text>
-      </TouchableOpacity>
+      {/* Premium Banner Manager Modal */}
+      <PremiumBannerManager
+        visible={showBannerManager}
+        onClose={() => setShowBannerManager(false)}
+        userId={user?.uid || ''}
+        onBannersUpdated={loadPremiumBanners}
+      />
     </ScrollView>
   );
 };
@@ -1470,6 +1523,32 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 14,
     color: '#333',
+  },
+  profileActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: 12,
+  },
+  premiumButton: {
+    backgroundColor: '#f0f8ff',
+    borderColor: '#007AFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  premiumButtonText: {
+    color: '#007AFF',
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  noPostsText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    paddingVertical: 20,
   },
 });
 

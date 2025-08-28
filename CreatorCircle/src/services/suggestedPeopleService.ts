@@ -37,7 +37,7 @@ export class SuggestedPeopleService {
       }
 
       // Get users that current user is following
-      const following = await FollowService.getFollowing(currentUserId);
+      const following = await FollowService.getFollowingIds(currentUserId);
 
       // Build query for users - use the same approach as UserService.getAllUsers()
       const usersRef = collection(db, 'users');

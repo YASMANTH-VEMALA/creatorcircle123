@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delete Account Request - CreatorCircle</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #007AFF, #5856D6);
+            border-radius: 20px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            color: white;
+            font-weight: bold;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 18px;
+        }
+
+        .warning-banner {
+            background: #FFF3CD;
+            border: 1px solid #FFEAA7;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .warning-icon {
+            color: #F39C12;
+            font-size: 24px;
+        }
+
+        .warning-text {
+            color: #856404;
+            font-weight: 500;
+            text-align: left;
+        }
+
+        .user-info {
+            background: #F8F9FA;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .user-info h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #E9ECEF;
+        }
+
+        .info-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .info-label {
+            font-weight: 500;
+            color: #666;
+        }
+
+        .info-value {
+            color: #333;
+            font-family: monospace;
+        }
+
+        .deletion-list {
+            background: #FFF5F5;
+            border: 1px solid #FED7D7;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+
+        .deletion-list h3 {
+            color: #E53E3E;
+            margin-bottom: 15px;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .deletion-list ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .deletion-list li {
+            color: #666;
+            margin-bottom: 8px;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .deletion-list li:before {
+            content: "•";
+            color: #E53E3E;
+            position: absolute;
+            left: 0;
+            font-weight: bold;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: #007AFF;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #005FCC;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: #FF3B30;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #D70015;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: #F8F9FA;
+            color: #666;
+            border: 1px solid #E9ECEF;
+        }
+
+        .btn-secondary:hover {
+            background: #E9ECEF;
+            transform: translateY(-2px);
+        }
+
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #E9ECEF;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .footer a {
+            color: #007AFF;
+            text-decoration: none;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .status.success {
+            background: #D4EDDA;
+            color: #155724;
+            border: 1px solid #C3E6CB;
+        }
+
+        .status.error {
+            background: #F8D7DA;
+            color: #721C24;
+            border: 1px solid #F5C6CB;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 30px 20px;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">CC</div>
+        <h1>Account Deletion Request</h1>
+        <p class="subtitle">CreatorCircle - Data Privacy Center</p>
+
+        <div class="warning-banner">
+            <span class="warning-icon">⚠️</span>
+            <div class="warning-text">
+                <strong>Important:</strong> This action cannot be undone. All your data will be permanently deleted.
+            </div>
+        </div>
+
+        <div class="user-info" id="userInfo" style="display: none;">
+            <h3>Account Information</h3>
+            <div class="info-item">
+                <span class="info-label">Email:</span>
+                <span class="info-value" id="userEmail">-</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">User ID:</span>
+                <span class="info-value" id="userId">-</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Request Date:</span>
+                <span class="info-value" id="requestDate">-</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Validity:</span>
+                <span class="info-value" id="validity">-</span>
+            </div>
+        </div>
+
+        <div class="deletion-list">
+            <h3>The following data will be permanently deleted:</h3>
+            <ul>
+                <li>Your complete user profile and account information</li>
+                <li>All posts, content, and media you've shared</li>
+                <li>Chat messages and conversation history</li>
+                <li>Collaboration requests and partnerships</li>
+                <li>Follow relationships and connections</li>
+                <li>AI settings and preferences</li>
+                <li>Search history and activity logs</li>
+                <li>XP points, achievements, and badges</li>
+                <li>All associated metadata and analytics</li>
+            </ul>
+        </div>
+
+        <div class="action-buttons">
+            <button class="btn btn-danger" onclick="confirmDeletion()" id="deleteBtn">
+                🗑️ Confirm Account Deletion
+            </button>
+            <a href="mailto:support@creatorcircle.app" class="btn btn-primary">
+                ✉️ Contact Support
+            </a>
+            <button class="btn btn-secondary" onclick="cancelRequest()">
+                ❌ Cancel Request
+            </button>
+        </div>
+
+        <div id="status" class="status" style="display: none;"></div>
+
+        <div class="footer">
+            <p>
+                This request is processed according to our 
+                <a href="#" target="_blank">Privacy Policy</a> and applicable data protection laws.
+            </p>
+            <p style="margin-top: 10px;">
+                Need help? Contact us at 
+                <a href="mailto:support@creatorcircle.app">support@creatorcircle.app</a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Parse URL parameters
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                userId: params.get('userId'),
+                email: params.get('email'),
+                timestamp: params.get('timestamp'),
+                source: params.get('source')
+            };
+        }
+
+        // Check if request is valid (within 24 hours)
+        function isRequestValid(timestamp) {
+            if (!timestamp) return false;
+            
+            try {
+                const requestTime = new Date(timestamp);
+                const now = new Date();
+                const hoursDiff = (now.getTime() - requestTime.getTime()) / (1000 * 60 * 60);
+                
+                return hoursDiff <= 24;
+            } catch (error) {
+                return false;
+            }
+        }
+
+        // Initialize the page
+        function init() {
+            const params = getUrlParams();
+            
+            if (params.userId && params.email && params.timestamp) {
+                const userInfo = document.getElementById('userInfo');
+                const userEmail = document.getElementById('userEmail');
+                const userId = document.getElementById('userId');
+                const requestDate = document.getElementById('requestDate');
+                const validity = document.getElementById('validity');
+                
+                userInfo.style.display = 'block';
+                userEmail.textContent = params.email;
+                userId.textContent = params.userId;
+                requestDate.textContent = new Date(params.timestamp).toLocaleString();
+                
+                const isValid = isRequestValid(params.timestamp);
+                validity.textContent = isValid ? 'Valid (within 24 hours)' : 'Expired (over 24 hours old)';
+                validity.style.color = isValid ? '#28A745' : '#DC3545';
+                
+                if (!isValid) {
+                    document.getElementById('deleteBtn').disabled = true;
+                    document.getElementById('deleteBtn').textContent = '⏰ Request Expired';
+                    document.getElementById('deleteBtn').style.background = '#6C757D';
+                }
+            } else {
+                showStatus('error', 'Invalid or missing request parameters. Please use a valid deletion link.');
+            }
+        }
+
+        // Show status message
+        function showStatus(type, message) {
+            const status = document.getElementById('status');
+            status.className = `status ${type}`;
+            status.textContent = message;
+            status.style.display = 'block';
+        }
+
+        // Confirm deletion
+        function confirmDeletion() {
+            const params = getUrlParams();
+            
+            if (!isRequestValid(params.timestamp)) {
+                showStatus('error', 'This deletion request has expired. Please generate a new request from the app.');
+                return;
+            }
+
+            const confirmed = confirm(
+                `Are you absolutely sure you want to delete the account for ${params.email}?\n\n` +
+                'This action cannot be undone and will permanently delete all data associated with this account.\n\n' +
+                'Click OK to proceed or Cancel to abort.'
+            );
+
+            if (confirmed) {
+                // In a real implementation, this would make an API call to delete the account
+                showStatus('success', 
+                    'Account deletion request submitted successfully. ' +
+                    'Your account and all associated data will be permanently deleted within 24-48 hours. ' +
+                    'You will receive a confirmation email once the process is complete.'
+                );
+                
+                // Disable the button to prevent multiple submissions
+                document.getElementById('deleteBtn').disabled = true;
+                document.getElementById('deleteBtn').textContent = '✅ Request Submitted';
+                document.getElementById('deleteBtn').style.background = '#28A745';
+                
+                // Log the deletion request (in production, this would be sent to your backend)
+                console.log('Account deletion requested:', params);
+            }
+        }
+
+        // Cancel request
+        function cancelRequest() {
+            const confirmed = confirm('Are you sure you want to cancel this deletion request?');
+            if (confirmed) {
+                showStatus('success', 'Deletion request cancelled. Your account remains active.');
+                setTimeout(() => {
+                    window.close();
+                }, 2000);
+            }
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html> 

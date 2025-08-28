@@ -9,19 +9,21 @@ import {
   updateDoc,
   deleteDoc,
   Timestamp,
-  serverTimestamp 
+  serverTimestamp,
+  writeBatch 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { UserService } from './userService';
 
 export interface Notification {
   id: string;
-  type: 'like' | 'comment' | 'collab_request' | 'request_accepted' | 'request_rejected' | 'report_warning';
+  type: 'like' | 'comment' | 'comment_reply' | 'comment_like' | 'collab_request' | 'request_accepted' | 'request_rejected' | 'report_warning' | 'follow' | 'spotlight_shared';
   senderId: string;
   senderName: string;
   senderProfilePic?: string;
   senderVerified: boolean;
   relatedPostId?: string;
+  relatedCommentId?: string;
   commentText?: string;
   timestamp: Timestamp;
   read: boolean;
@@ -78,10 +80,14 @@ class NotificationService {
         const titleMap: Record<Notification['type'], string> = {
           like: 'New Like',
           comment: 'New Comment',
+          comment_reply: 'New Reply',
+          comment_like: 'Comment Liked',
           collab_request: 'Collaboration Request',
           request_accepted: 'Request Accepted',
           request_rejected: 'Request Rejected',
           report_warning: 'Report Warning',
+          follow: 'New Follower',
+          spotlight_shared: 'Spotlight Shared',
         };
         const title = titleMap[notification.type] || 'Notification';
         const body = notification.message || `${notification.senderName} sent you a notification`;
@@ -89,6 +95,7 @@ class NotificationService {
           type: notification.type,
           senderId: notification.senderId,
           relatedPostId: notification.relatedPostId,
+          relatedCommentId: notification.relatedCommentId,
         });
       }
 
@@ -99,48 +106,55 @@ class NotificationService {
   }
 
   /**
-   * Listen to user's notifications
+   * Listen to user's notifications with performance optimizations
    */
   listenToNotifications(
     userId: string,
     onNotificationsUpdate: (notifications: Notification[]) => void
   ): () => void {
     try {
+      // Use a more efficient query without orderBy to avoid index requirements
       const q = query(
         collection(db, 'users', userId, 'notifications'),
-        orderBy('timestamp', 'desc'),
-        limit(30)
+        limit(50) // Increased limit for better UX
       );
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const notifications: Notification[] = [];
-        snapshot.forEach((doc) => {
-          notifications.push({ id: doc.id, ...doc.data() } as Notification);
-        });
-
-        // Sort by timestamp (newest first) with safe timestamp handling
-        notifications.sort((a, b) => {
-          const getTimestamp = (timestamp: any) => {
-            if (!timestamp) return 0;
-            if (timestamp && typeof timestamp.toMillis === 'function') {
-              return timestamp.toMillis();
-            }
-            if (timestamp && typeof timestamp.toDate === 'function') {
-              return timestamp.toDate().getTime();
-            }
-            if (timestamp instanceof Date) {
-              return timestamp.getTime();
-            }
-            if (timestamp && typeof timestamp === 'object' && timestamp.seconds) {
-              return timestamp.seconds * 1000;
-            }
-            return 0;
-          };
+        
+        // Process notifications in batches for better performance
+        const batchSize = 10;
+        const processBatch = (docs: any[], startIndex: number) => {
+          const endIndex = Math.min(startIndex + batchSize, docs.length);
+          const batch = docs.slice(startIndex, endIndex);
           
-          return getTimestamp(b.timestamp) - getTimestamp(a.timestamp);
-        });
-
-        onNotificationsUpdate(notifications);
+          batch.forEach((doc) => {
+            try {
+              const data = doc.data();
+              if (data) {
+                notifications.push({ id: doc.id, ...data } as Notification);
+              }
+            } catch (error) {
+              console.warn('Error processing notification doc:', error);
+            }
+          });
+          
+          // Process next batch if available
+          if (endIndex < docs.length) {
+            setTimeout(() => processBatch(docs, endIndex), 0);
+          } else {
+            // All batches processed, now sort and update
+            this.sortAndUpdateNotifications(notifications, onNotificationsUpdate);
+          }
+        };
+        
+        // Start processing with first batch
+        const docs = snapshot.docs;
+        if (docs.length > 0) {
+          processBatch(docs, 0);
+        } else {
+          onNotificationsUpdate([]);
+        }
       });
 
       return unsubscribe;
@@ -151,13 +165,73 @@ class NotificationService {
   }
 
   /**
-   * Mark notification as read
+   * Sort notifications and update UI efficiently
+   */
+  private sortAndUpdateNotifications(
+    notifications: Notification[], 
+    onNotificationsUpdate: (notifications: Notification[]) => void
+  ) {
+    try {
+      // Use a more efficient sorting approach
+      const sortedNotifications = notifications.sort((a, b) => {
+        const getTimestamp = (timestamp: any): number => {
+          if (!timestamp) return 0;
+          
+          // Handle Firestore Timestamp objects
+          if (timestamp && typeof timestamp.toMillis === 'function') {
+            return timestamp.toMillis();
+          }
+          if (timestamp && typeof timestamp.toDate === 'function') {
+            return timestamp.toDate().getTime();
+          }
+          
+          // Handle Date objects
+          if (timestamp instanceof Date) {
+            return timestamp.getTime();
+          }
+          
+          // Handle Firestore timestamp objects
+          if (timestamp && typeof timestamp === 'object' && timestamp.seconds) {
+            return timestamp.seconds * 1000;
+          }
+          
+          // Handle numeric timestamps
+          if (typeof timestamp === 'number') {
+            return timestamp;
+          }
+          
+          return 0;
+        };
+        
+        const timeA = getTimestamp(a.timestamp);
+        const timeB = getTimestamp(b.timestamp);
+        
+        return timeB - timeA; // Newest first
+      });
+
+      // Update UI on next tick to prevent blocking
+      requestAnimationFrame(() => {
+        onNotificationsUpdate(sortedNotifications);
+      });
+    } catch (error) {
+      console.error('Error sorting notifications:', error);
+      // Fallback: return unsorted notifications
+      onNotificationsUpdate(notifications);
+    }
+  }
+
+  /**
+   * Mark notification as read with optimized performance
    */
   async markNotificationAsRead(userId: string, notificationId: string): Promise<void> {
     try {
       const notificationRef = doc(db, 'users', userId, 'notifications', notificationId);
-      await updateDoc(notificationRef, { read: true });
-      console.log('Notification marked as read');
+      
+      // Use updateDoc for better performance than setDoc
+      await updateDoc(notificationRef, {
+        read: true,
+        readAt: serverTimestamp()
+      });
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
@@ -166,36 +240,36 @@ class NotificationService {
   /**
    * Mark all notifications as read
    */
-  async markAllNotificationsAsRead(userId: string): Promise<void> {
+  async markAllAsRead(userId: string): Promise<void> {
     try {
       const q = query(
         collection(db, 'users', userId, 'notifications'),
-        orderBy('timestamp', 'desc')
+        limit(100) // Process in batches
       );
 
-      const snapshot = await onSnapshot(q, (snapshot) => {
-        const updatePromises = snapshot.docs.map((doc) =>
-          updateDoc(doc.ref, { read: true })
-        );
-        return Promise.all(updatePromises);
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const batch = writeBatch(db);
+        let count = 0;
+        
+        snapshot.docs.forEach((doc) => {
+          if (!doc.data().read) {
+            batch.update(doc.ref, { 
+              read: true, 
+              readAt: serverTimestamp() 
+            });
+            count++;
+          }
+        });
+        
+        if (count > 0) {
+          batch.commit().catch(console.error);
+        }
       });
 
-      console.log('All notifications marked as read');
+      // Return unsubscribe function
+      return unsubscribe;
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
-    }
-  }
-
-  /**
-   * Delete a notification
-   */
-  async deleteNotification(userId: string, notificationId: string): Promise<void> {
-    try {
-      const notificationRef = doc(db, 'users', userId, 'notifications', notificationId);
-      await deleteDoc(notificationRef);
-      console.log('Notification deleted successfully');
-    } catch (error) {
-      console.error('Error deleting notification:', error);
     }
   }
 
@@ -206,35 +280,42 @@ class NotificationService {
     try {
       const q = query(
         collection(db, 'users', userId, 'notifications'),
-        orderBy('timestamp', 'desc')
+        limit(100) // Process in batches
       );
 
-      const snapshot = await onSnapshot(q, (snapshot) => {
-        const deletePromises = snapshot.docs.map((doc) => deleteDoc(doc.ref));
-        return Promise.all(deletePromises);
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const batch = writeBatch(db);
+        snapshot.docs.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        
+        batch.commit().catch(console.error);
       });
 
-      console.log('All notifications cleared');
+      // Return unsubscribe function
+      return unsubscribe;
     } catch (error) {
       console.error('Error clearing all notifications:', error);
     }
   }
 
   /**
-   * Get unread count
+   * Get unread count with optimized query
    */
   async getUnreadCount(userId: string): Promise<number> {
     try {
       const q = query(
         collection(db, 'users', userId, 'notifications'),
-        orderBy('timestamp', 'desc')
+        limit(100) // Reasonable limit for unread count
       );
 
-      const snapshot = await onSnapshot(q, (snapshot) => {
-        return snapshot.docs.filter(doc => !doc.data().read).length;
+      return new Promise((resolve) => {
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const count = snapshot.docs.filter(doc => !doc.data().read).length;
+          unsubscribe();
+          resolve(count);
+        });
       });
-
-      return snapshot;
     } catch (error) {
       console.error('Error getting unread count:', error);
       return 0;
@@ -251,13 +332,17 @@ class NotificationService {
   ): Promise<void> {
     try {
       const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for like notification');
+        return;
+      }
       
       await this.createNotification(receiverId, {
         type: 'like',
         senderId,
         senderName: senderProfile.name,
         senderProfilePic: senderProfile.profilePhotoUrl,
-        senderVerified: senderProfile.verified || false,
+        senderVerified: senderProfile.isVerified || false,
         relatedPostId: postId,
         message: `${senderProfile.name} liked your post.`
       });
@@ -277,6 +362,11 @@ class NotificationService {
   ): Promise<void> {
     try {
       const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for comment notification');
+        return;
+      }
+      
       const shortComment = commentText.length > 50 ? commentText.substring(0, 50) + '...' : commentText;
       
       await this.createNotification(receiverId, {
@@ -284,7 +374,7 @@ class NotificationService {
         senderId,
         senderName: senderProfile.name,
         senderProfilePic: senderProfile.profilePhotoUrl,
-        senderVerified: senderProfile.verified || false,
+        senderVerified: senderProfile.isVerified || false,
         relatedPostId: postId,
         commentText: shortComment,
         message: `${senderProfile.name} commented: '${shortComment}' on your post.`
@@ -304,14 +394,18 @@ class NotificationService {
   ): Promise<void> {
     try {
       const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for collaboration request notification');
+        return;
+      }
       
       await this.createNotification(receiverId, {
         type: 'collab_request',
         senderId,
         senderName: senderProfile.name,
         senderProfilePic: senderProfile.profilePhotoUrl,
-        senderVerified: senderProfile.verified || false,
-        message: `${senderProfile.name} sent you a collaboration request.`
+        senderVerified: senderProfile.isVerified || false,
+        message: `${senderProfile.name} sent you a collaboration request: ${message}`
       });
     } catch (error) {
       console.error('Error creating collaboration request notification:', error);
@@ -319,26 +413,40 @@ class NotificationService {
   }
 
   /**
-   * Create request accepted notification
+   * Create collaboration accepted notification
    */
-  async createRequestAcceptedNotification(
+  async createCollaborationAcceptedNotification(
     senderId: string,
     receiverId: string
   ): Promise<void> {
     try {
       const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for notification');
+        return;
+      }
       
       await this.createNotification(receiverId, {
         type: 'request_accepted',
         senderId,
         senderName: senderProfile.name,
         senderProfilePic: senderProfile.profilePhotoUrl,
-        senderVerified: senderProfile.verified || false,
+        senderVerified: senderProfile.isVerified || false,
         message: `${senderProfile.name} accepted your collaboration request.`
       });
     } catch (error) {
-      console.error('Error creating request accepted notification:', error);
+      console.error('Error creating collaboration accepted notification:', error);
     }
+  }
+
+  /**
+   * Create request accepted notification (alias for collaboration accepted)
+   */
+  async createRequestAcceptedNotification(
+    senderId: string,
+    receiverId: string
+  ): Promise<void> {
+    return this.createCollaborationAcceptedNotification(senderId, receiverId);
   }
 
   /**
@@ -350,13 +458,17 @@ class NotificationService {
   ): Promise<void> {
     try {
       const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for request rejected notification');
+        return;
+      }
       
       await this.createNotification(receiverId, {
         type: 'request_rejected',
         senderId,
         senderName: senderProfile.name,
         senderProfilePic: senderProfile.profilePhotoUrl,
-        senderVerified: senderProfile.verified || false,
+        senderVerified: senderProfile.isVerified || false,
         message: `${senderProfile.name} rejected your collaboration request.`
       });
     } catch (error) {
@@ -383,6 +495,128 @@ class NotificationService {
       });
     } catch (error) {
       console.error('Error creating report warning notification:', error);
+    }
+  }
+
+  /**
+   * Create comment reply notification
+   */
+  async createCommentReplyNotification(
+    senderId: string,
+    receiverId: string,
+    postId: string,
+    commentId: string,
+    commentText: string,
+    replyText: string
+  ): Promise<void> {
+    try {
+      const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for comment reply notification');
+        return;
+      }
+      const shortReply = replyText.length > 50 ? replyText.substring(0, 50) + '...' : replyText;
+      
+      await this.createNotification(receiverId, {
+        type: 'comment_reply',
+        senderId,
+        senderName: senderProfile.name,
+        senderProfilePic: senderProfile.profilePhotoUrl,
+        senderVerified: senderProfile.isVerified || false,
+        relatedPostId: postId,
+        relatedCommentId: commentId,
+        commentText: shortReply,
+        message: `${senderProfile.name} replied to your comment: '${shortReply}'`
+      });
+    } catch (error) {
+      console.error('Error creating comment reply notification:', error);
+    }
+  }
+
+  /**
+   * Create comment like notification
+   */
+  async createCommentLikeNotification(
+    senderId: string,
+    receiverId: string,
+    postId: string,
+    commentId: string
+  ): Promise<void> {
+    try {
+      const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for comment like notification');
+        return;
+      }
+      
+      await this.createNotification(receiverId, {
+        type: 'comment_like',
+        senderId,
+        senderName: senderProfile.name,
+        senderProfilePic: senderProfile.profilePhotoUrl,
+        senderVerified: senderProfile.isVerified || false,
+        relatedPostId: postId,
+        relatedCommentId: commentId,
+        message: `${senderProfile.name} liked your comment.`
+      });
+    } catch (error) {
+      console.error('Error creating comment like notification:', error);
+    }
+  }
+
+  /**
+   * Create follow notification
+   */
+  async createFollowNotification(
+    senderId: string,
+    receiverId: string
+  ): Promise<void> {
+    try {
+      const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for follow notification');
+        return;
+      }
+      
+      await this.createNotification(receiverId, {
+        type: 'follow',
+        senderId,
+        senderName: senderProfile.name,
+        senderProfilePic: senderProfile.profilePhotoUrl,
+        senderVerified: senderProfile.isVerified || false,
+        message: `${senderProfile.name} started following you!`
+      });
+    } catch (error) {
+      console.error('Error creating follow notification:', error);
+    }
+  }
+
+  /**
+   * Create Spotlight shared notification
+   */
+  async createSpotlightSharedNotification(
+    senderId: string,
+    receiverId: string,
+    spotlightId: string
+  ): Promise<void> {
+    try {
+      const senderProfile = await UserService.getUserProfile(senderId);
+      if (!senderProfile) {
+        console.warn('Sender profile not found for Spotlight shared notification');
+        return;
+      }
+      
+      await this.createNotification(receiverId, {
+        type: 'spotlight_shared',
+        senderId,
+        senderName: senderProfile.name,
+        senderProfilePic: senderProfile.profilePhotoUrl,
+        senderVerified: senderProfile.isVerified || false,
+        relatedPostId: spotlightId,
+        message: `${senderProfile.name} shared a Spotlight with you.`
+      });
+    } catch (error) {
+      console.error('Error creating Spotlight shared notification:', error);
     }
   }
 }

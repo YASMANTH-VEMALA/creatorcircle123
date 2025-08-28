@@ -1,3 +1,5 @@
+import { Timestamp } from 'firebase/firestore';
+
 export interface User {
   uid: string;
   email: string;
@@ -20,6 +22,17 @@ export interface SocialLink {
   url: string;
 }
 
+export interface Banner {
+  id: string;
+  imageUrl: string;
+  title: string | null; // Changed from optional to nullable
+  description: string | null; // Changed from optional to nullable
+  order: number;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface Profile {
   uid: string;
   email: string;
@@ -29,6 +42,8 @@ export interface Profile {
   aboutMe: string;
   profilePhotoUrl: string;
   bannerPhotoUrl?: string;
+  // Premium banners (up to 5 for premium users)
+  banners?: Banner[];
   skills?: string[];
   interests?: string[];
   followers?: number;
@@ -42,6 +57,8 @@ export interface Profile {
   updatedAt: Date;
   pushToken?: string;
   socialLinks?: SocialLink[];
+  // AI API Key for personalized AI features
+  aiApiKey?: string;
   // XP system fields
   xp?: number;
   level?: number;
@@ -66,6 +83,7 @@ export interface Post {
   likes: number;
   comments: number;
   reports: number;
+  reactions?: { [emoji: string]: number };
   isEdited: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -79,6 +97,12 @@ export interface Comment {
   userAvatar?: string;
   content: string;
   createdAt: Date;
+  // New fields for replies and likes
+  replyToCommentId?: string;
+  replyToUserName?: string;
+  likes: number;
+  isEdited?: boolean;
+  editedAt?: Date;
 }
 
 export interface Report {
@@ -108,31 +132,7 @@ export interface CollaborationRequest {
   createdAt: Date;
 }
 
-export interface Message {
-  id: string;
-  senderId: string;
-  receiverId: string;
-  content: string;
-  media?: string[];
-  timestamp: Date;
-  isRead: boolean;
-  seenBy?: string;
-  seenAt?: Date;
-  isEdited?: boolean;
-  editedAt?: Date;
-  isDeleted?: boolean;
-  deletedAt?: Date;
-  replyToMessageId?: string;
-  replyToMessage?: Message;
-}
-
-export interface Chat {
-  id: string;
-  participants: string[];
-  lastMessage?: Message;
-  lastMessageTime?: Date;
-  unreadCount: number;
-}
+// Chat-related interfaces removed - will be re-implemented later
 
 export interface Collaboration {
   id: string;
@@ -145,17 +145,17 @@ export interface Collaboration {
 
 export interface Notification {
   id: string;
-  type: 'like' | 'comment' | 'collab_request' | 'collab_accepted' | 'follow' | 'mention';
-  fromUserId: string;
-  fromUserName: string;
-  fromUserAvatar?: string;
-  fromUserCollege?: string;
-  toUserId: string;
-  postId?: string;
-  postContent?: string;
+  type: 'like' | 'comment' | 'comment_reply' | 'comment_like' | 'collab_request' | 'request_accepted' | 'request_rejected' | 'report_warning';
+  senderId: string;
+  senderName: string;
+  senderProfilePic?: string;
+  senderVerified: boolean;
+  relatedPostId?: string;
+  relatedCommentId?: string;
+  commentText?: string;
+  timestamp: Timestamp;
+  read: boolean;
   message?: string;
-  isRead: boolean;
-  timestamp: Date;
 }
 
 export interface NotificationPreview {
@@ -174,14 +174,24 @@ export type RootStackParamList = {
   Main: undefined;
   Login: undefined;
   Signup: undefined;
+  Profile: undefined;
   UserProfile: {
     userId: string;
     userName?: string;
   };
-  ChatList: undefined;
-  Chat: {
-    otherUserId: string;
-    otherUserName: string;
+  // New Chat System Routes
+  MessagesList: undefined;
+  ChatWindow: {
+    chatId: string;
+    otherUser: {
+      id: string;
+      name: string;
+      profilePic: string;
+      college: string;
+      isVerified: boolean;
+      isOnline: boolean;
+      lastSeen: any;
+    };
   };
   CollaborationRequests: undefined;
   Notifications: undefined;
@@ -197,6 +207,12 @@ export type RootStackParamList = {
   CreateRoom: undefined;
   RoomChat: { roomId: string; roomName?: string };
   LocationSettings: undefined;
+  Settings: undefined;
+  FindPeople: undefined;
+  More: undefined;
+  Spotlight: { initialPostId?: string } | undefined;
+  CreateSpotlight: undefined;
+  SpotlightDemo: undefined;
 };
 
 export interface Room {
@@ -210,15 +226,15 @@ export interface Room {
   members: string[];
   membersCount: number;
   isTemporary: boolean;
-  endsAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  endsAt?: Timestamp; // Changed from Date to Timestamp to match service
+  createdAt: Timestamp; // Changed from Date to Timestamp to match service
+  updatedAt: Timestamp; // Changed from Date to Timestamp to match service
 }
 
 export interface RoomMember {
   uid: string;
   role: 'admin' | 'member';
-  joinedAt: Date;
+  joinedAt: Timestamp; // Changed from Date to Timestamp to match service
 }
 
 export interface RoomMessage {
@@ -226,5 +242,5 @@ export interface RoomMessage {
   roomId: string;
   senderId: string;
   text: string;
-  timestamp: Date;
+  timestamp: Timestamp; // Changed from Date to Timestamp to match service
 } 

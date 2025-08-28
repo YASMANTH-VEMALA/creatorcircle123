@@ -23,8 +23,18 @@ export class RealtimeMigrationService {
     // Monitor users collection
     this.userUnsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
       snapshot.docChanges().forEach(async (change) => {
-        if (change.type === 'modified' || change.type === 'added') {
-          await this.checkAndConvertUserFiles(change.doc);
+        try {
+          if (change.type === 'modified' || change.type === 'added') {
+            const data = change.doc.data();
+            // Validate user data before processing
+            if (data && data.id && typeof data.id === 'string' && data.id.trim() !== '') {
+              await this.checkAndConvertUserFiles(change.doc);
+            } else {
+              console.warn(`⚠️ Skipping invalid user in migration service: ${change.doc.id}`);
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Error processing user change in migration service:`, error);
         }
       });
     });
@@ -32,8 +42,18 @@ export class RealtimeMigrationService {
     // Monitor posts collection
     this.postUnsubscribe = onSnapshot(collection(db, 'posts'), (snapshot) => {
       snapshot.docChanges().forEach(async (change) => {
-        if (change.type === 'modified' || change.type === 'added') {
-          await this.checkAndConvertPostFiles(change.doc);
+        try {
+          if (change.type === 'modified' || change.type === 'added') {
+            const data = change.doc.data();
+            // Validate post data before processing
+            if (data && data.userId && typeof data.userId === 'string' && data.userId.trim() !== '') {
+              await this.checkAndConvertPostFiles(change.doc);
+            } else {
+              console.warn(`⚠️ Skipping invalid post in migration service: ${change.doc.id}`);
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Error processing post change in migration service:`, error);
         }
       });
     });

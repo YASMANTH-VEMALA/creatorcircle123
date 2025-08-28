@@ -39,7 +39,12 @@ const FindPeopleScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [collaborationStatus, setCollaborationStatus] = useState<{[key: string]: boolean}>({});
+  const [collaborationStatuses, setCollaborationStatuses] = useState<{[key: string]: {
+    status: 'none' | 'pending' | 'accepted' | 'rejected';
+    requestId?: string;
+    isSender?: boolean;
+    message?: string;
+  }}>({});
   const [recentlyViewed, setRecentlyViewed] = useState<ViewedProfile[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
@@ -61,21 +66,18 @@ const FindPeopleScreen: React.FC = () => {
   const checkCollaborationStatuses = async () => {
     if (!user) return;
     
-    const statuses: {[key: string]: boolean} = {};
-    
-    for (const targetUser of users) {
-      if (targetUser.uid !== user.uid) {
-        try {
-          const hasCollaborated = await CollaborationService.haveUsersCollaborated(user.uid, targetUser.uid);
-          statuses[targetUser.uid] = hasCollaborated;
-        } catch (error) {
-          console.error('Error checking collaboration status:', error);
-          statuses[targetUser.uid] = false;
-        }
+    try {
+      const targetUserIds = users
+        .filter(targetUser => targetUser.uid !== user.uid)
+        .map(targetUser => targetUser.uid);
+      
+      if (targetUserIds.length > 0) {
+        const statuses = await collaborationService.getCollaborationStatusesForUsers(user.uid, targetUserIds);
+        setCollaborationStatuses(statuses);
       }
-    }
-    
-    setCollaborationStatus(statuses);
+        } catch (error) {
+      console.error('Error checking collaboration statuses:', error);
+        }
   };
 
   const loadUsers = async () => {
@@ -245,6 +247,39 @@ const FindPeopleScreen: React.FC = () => {
     );
   };
 
+  // Helper functions for collaboration status display
+  const getCollaborationIcon = (userId: string) => {
+    const status = collaborationStatuses[userId]?.status;
+    if (status === 'accepted') return 'people';
+    if (status === 'pending') return 'time-outline';
+    if (status === 'rejected') return 'close-circle-outline';
+    return 'people-outline';
+  };
+
+  const getCollaborationColor = (userId: string) => {
+    const status = collaborationStatuses[userId]?.status;
+    if (status === 'accepted') return 'white';
+    if (status === 'pending') return '#FF9500';
+    if (status === 'rejected') return '#FF3B30';
+    return '#007AFF';
+  };
+
+  const getCollaborationText = (userId: string) => {
+    const status = collaborationStatuses[userId];
+    if (!status) return 'Collaborate';
+    
+    switch (status.status) {
+      case 'accepted':
+        return 'Collaborated';
+      case 'pending':
+        return status.isSender ? 'Pending...' : 'Respond';
+      case 'rejected':
+        return 'Rejected';
+      default:
+        return 'Collaborate';
+    }
+  };
+
   const handleCollaborate = async (targetUser: Profile) => {
     if (!user) {
       Alert.alert('Error', 'You must be logged in to send collaboration requests');
@@ -256,9 +291,10 @@ const FindPeopleScreen: React.FC = () => {
       return;
     }
 
-    // Check if already collaborated
-    const hasCollaborated = collaborationStatus[targetUser.uid];
-    if (hasCollaborated) {
+    // Check current collaboration status
+    const currentStatus = collaborationStatuses[targetUser.uid];
+    
+    if (currentStatus?.status === 'accepted') {
       // Show un-collaborate option
       Alert.alert(
         'Remove Collaboration',
@@ -272,6 +308,20 @@ const FindPeopleScreen: React.FC = () => {
           }
         ]
       );
+      return;
+    }
+    
+    if (currentStatus?.status === 'pending') {
+      if (currentStatus.isSender) {
+        Alert.alert('Request Pending', 'You have already sent a collaboration request to this user.');
+      } else {
+        Alert.alert('Request Pending', 'This user has already sent you a collaboration request.');
+      }
+      return;
+    }
+    
+    if (currentStatus?.status === 'rejected') {
+      Alert.alert('Request Rejected', 'Your previous collaboration request was rejected.');
       return;
     }
 
@@ -293,23 +343,7 @@ const FindPeopleScreen: React.FC = () => {
         return;
       }
 
-      // Check if users have already collaborated
-      const hasCollaboratedCheck = await CollaborationService.haveUsersCollaborated(user.uid, targetUser.uid);
-      if (hasCollaboratedCheck) {
-        Alert.alert('Already Collaborated', 'You have already collaborated with this user!');
-        return;
-      }
-
-      // Check for existing request
-      const existingRequest = await CollaborationService.getExistingRequest(user.uid, targetUser.uid);
-      if (existingRequest) {
-        if (existingRequest.status === 'pending') {
-          Alert.alert('Request Pending', 'You have already sent a collaboration request to this user.');
-        } else if (existingRequest.status === 'declined') {
-          Alert.alert('Request Declined', 'Your previous collaboration request was declined.');
-        }
-        return;
-      }
+      // Collaboration status already checked above
 
       // Send collaboration request
               await collaborationService.sendCollaborationRequest(user.uid, targetUser.uid, 'I would like to collaborate with you!');
@@ -330,9 +364,11 @@ const FindPeopleScreen: React.FC = () => {
     }
 
     try {
-      await CollaborationService.removeCollaboration(user.uid, targetUser.uid);
+      await collaborationService.removeCollaboration(user.uid, targetUser.uid);
       Alert.alert('Success!', `Collaboration with ${targetUser.name} has been removed.`);
-      setCollaborationStatus(prev => ({ ...prev, [targetUser.uid]: false }));
+      
+      // Refresh collaboration statuses
+      await checkCollaborationStatuses();
     } catch (error) {
       console.error('Error removing collaboration:', error);
       Alert.alert('Error', 'Failed to remove collaboration.');
@@ -394,7 +430,8 @@ const FindPeopleScreen: React.FC = () => {
         <TouchableOpacity
           style={[
             styles.collaborateButton,
-            collaborationStatus[item.uid] && styles.collaboratedButton
+            collaborationStatuses[item.uid]?.status === 'accepted' && styles.collaboratedButton,
+            collaborationStatuses[item.uid]?.status === 'pending' && styles.pendingButton
           ]}
           onPress={(e) => {
             e.stopPropagation();
@@ -402,15 +439,16 @@ const FindPeopleScreen: React.FC = () => {
           }}
         >
           <Ionicons 
-            name="people-outline" 
+            name={getCollaborationIcon(item.uid)} 
             size={16} 
-            color={collaborationStatus[item.uid] ? 'white' : '#007AFF'} 
+            color={getCollaborationColor(item.uid)} 
           />
           <Text style={[
             styles.collaborateText,
-            collaborationStatus[item.uid] && styles.collaboratedText
+            collaborationStatuses[item.uid]?.status === 'accepted' && styles.collaboratedText,
+            collaborationStatuses[item.uid]?.status === 'pending' && styles.pendingText
           ]}>
-            {collaborationStatus[item.uid] ? 'Collaborated' : 'Collaborate'}
+            {getCollaborationText(item.uid)}
           </Text>
         </TouchableOpacity>
       </View>
@@ -734,6 +772,13 @@ const styles = StyleSheet.create({
   },
   collaboratedText: {
     color: 'white',
+  },
+  pendingButton: {
+    backgroundColor: '#FFF8E1',
+    borderColor: '#FF9500',
+  },
+  pendingText: {
+    color: '#FF9500',
   },
   userDetails: {
     paddingHorizontal: 16,

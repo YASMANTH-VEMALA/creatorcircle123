@@ -3,12 +3,13 @@ import {
   addDoc,
   arrayRemove,
   arrayUnion,
+  arrayContains,
   collection,
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
-  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -68,29 +69,24 @@ async function sha256(input: string): Promise<string> {
 
 class RoomService {
   async createRoom(options: {
-    creatorId: string;
     name: string;
     description?: string;
     isPrivate: boolean;
-    joinKeyPlain?: string;
     isTemporary?: boolean;
-    endsAtMs?: number;
-    logoUri?: string;
-  }): Promise<Room> {
+    endsAt?: Date;
+    logoUrl?: string;
+    creatorId: string;
+  }): Promise<string> {
     const roomId = generateRoomId(7);
     const roomRef = doc(db, 'rooms', roomId);
-    let logoUrl: string | undefined;
-    if (options.logoUri) {
-      const path = `rooms/${roomId}/logo_${Date.now()}.jpg`;
-      logoUrl = await FileUploadService.uploadFile(options.logoUri, path);
-    }
 
-    const nowTs = serverTimestamp() as unknown as Timestamp; // stored as server time
-    const endsAt = options.isTemporary && options.endsAtMs ? Timestamp.fromMillis(options.endsAtMs) : undefined;
+    const nowTs = serverTimestamp() as unknown as Timestamp;
+    const endsAt = options.isTemporary && options.endsAt ? Timestamp.fromDate(options.endsAt) : undefined;
 
     const data: any = {
       id: roomId,
       name: options.name.trim(),
+      description: options.description?.trim(),
       isPrivate: !!options.isPrivate,
       creatorId: options.creatorId,
       admins: [options.creatorId],
@@ -100,53 +96,123 @@ class RoomService {
       createdAt: nowTs,
       updatedAt: nowTs,
     };
-    const desc = options.description?.trim();
-    if (desc && desc.length > 0) data.description = desc;
-    if (logoUrl) data.logoUrl = logoUrl;
+    
+    if (options.logoUrl) data.logoUrl = options.logoUrl;
     if (endsAt) data.endsAt = endsAt;
 
     await setDoc(roomRef, data);
 
     // Create membership doc for creator
     const memberRef = doc(db, 'rooms', roomId, 'members', options.creatorId);
-    await setDoc(memberRef, { uid: options.creatorId, role: 'admin', joinedAt: serverTimestamp() });
+    await setDoc(memberRef, { 
+      uid: options.creatorId, 
+      role: 'admin', 
+      joinedAt: serverTimestamp() 
+    });
 
-    // Store join key hash in secret doc if private
-    if (options.isPrivate && options.joinKeyPlain && options.joinKeyPlain.length > 0) {
-      const hash = await sha256(options.joinKeyPlain);
+    // Generate and store join key hash if private
+    if (options.isPrivate) {
+      const joinKey = generateRoomId(8).toLowerCase();
+      const hash = await sha256(joinKey);
       const secretRef = doc(db, 'rooms_secrets', roomId);
-      await setDoc(secretRef, { joinKeyHash: hash, createdAt: serverTimestamp(), creatorId: options.creatorId });
+      await setDoc(secretRef, { 
+        joinKeyHash: hash, 
+        joinKeyPlain: joinKey,
+        createdAt: serverTimestamp(), 
+        creatorId: options.creatorId 
+      });
     }
 
-    // Return hydrated room object with actual timestamps fetched
-    const created = await getDoc(roomRef);
-    return { id: roomId, ...(created.data() as Room) };
+    return roomId;
   }
 
   async getRoom(roomId: string): Promise<Room | null> {
     const snap = await getDoc(doc(db, 'rooms', roomId));
     if (!snap.exists()) return null;
-    return { id: roomId, ...(snap.data() as Room) };
+    const data = snap.data() as Room;
+    return { ...data, id: roomId };
   }
 
-  listenToRoom(roomId: string, onUpdate: (room: Room | null) => void): () => void {
-    const unsub = onSnapshot(doc(db, 'rooms', roomId), (d) => {
-      onUpdate(d.exists() ? ({ id: roomId, ...(d.data() as Room) }) : null);
-    });
-    return unsub;
+  subscribeToRoom(roomId: string, onUpdate: (room: Room | null) => void): () => void {
+    if (!roomId || typeof roomId !== 'string' || roomId.trim() === '') {
+      console.error('Invalid roomId for subscribeToRoom:', roomId);
+      return () => {};
+    }
+
+    try {
+      const unsub = onSnapshot(doc(db, 'rooms', roomId), (d) => {
+        onUpdate(d.exists() ? ({ ...(d.data() as Room), id: roomId }) : null);
+      });
+      return unsub;
+    } catch (error) {
+      console.error('Error subscribing to room:', error);
+      return () => {};
+    }
   }
 
-  listenToMembers(roomId: string, onUpdate: (members: RoomMember[]) => void): () => void {
-    const q = query(collection(db, 'rooms', roomId, 'members'), orderBy('joinedAt', 'asc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const list: RoomMember[] = [];
-      snap.forEach((d) => list.push(d.data() as RoomMember));
-      onUpdate(list);
-    });
-    return unsub;
+  subscribeToRoomMembers(roomId: string, onUpdate: (members: RoomMember[]) => void): () => void {
+    if (!roomId || typeof roomId !== 'string' || roomId.trim() === '') {
+      console.error('Invalid roomId for subscribeToRoomMembers:', roomId);
+      return () => {};
+    }
+
+    try {
+      // Remove orderBy to avoid index issues - will sort client-side
+      const q = query(collection(db, 'rooms', roomId, 'members'));
+      const unsub = onSnapshot(q, (snap) => {
+        const list: RoomMember[] = [];
+        snap.forEach((d) => list.push(d.data() as RoomMember));
+        
+        // Sort client-side by joinedAt
+        list.sort((a, b) => {
+          const aTime = a.joinedAt?.toDate?.() || new Date(a.joinedAt) || new Date(0);
+          const bTime = b.joinedAt?.toDate?.() || new Date(b.joinedAt) || new Date(0);
+          return aTime.getTime() - bTime.getTime();
+        });
+        
+        onUpdate(list);
+      });
+      return unsub;
+    } catch (error) {
+      console.error('Error subscribing to room members:', error);
+      return () => {};
+    }
+  }
+
+  subscribeToRoomMessages(roomId: string, onUpdate: (messages: RoomMessage[]) => void): () => void {
+    if (!roomId || typeof roomId !== 'string' || roomId.trim() === '') {
+      console.error('Invalid roomId for subscribeToRoomMessages:', roomId);
+      return () => {};
+    }
+
+    try {
+      // Remove orderBy to avoid index issues - will sort client-side
+      const q = query(collection(db, 'rooms', roomId, 'messages'));
+      const unsub = onSnapshot(q, (snap) => {
+        const list: RoomMessage[] = [];
+        snap.forEach((d) => list.push({ id: d.id, roomId, ...(d.data() as any) } as RoomMessage));
+        
+        // Sort client-side by timestamp
+        list.sort((a, b) => {
+          const aTime = a.timestamp?.toDate?.() || new Date(a.timestamp) || new Date(0);
+          const bTime = b.timestamp?.toDate?.() || new Date(b.timestamp) || new Date(0);
+          return aTime.getTime() - bTime.getTime();
+        });
+        
+        onUpdate(list);
+      });
+      return unsub;
+    } catch (error) {
+      console.error('Error subscribing to room messages:', error);
+      return () => {};
+    }
   }
 
   async joinRoom(roomId: string, userId: string, joinKeyPlain?: string): Promise<void> {
+    if (!roomId || !userId || typeof roomId !== 'string' || typeof userId !== 'string' || roomId.trim() === '' || userId.trim() === '') {
+      throw new Error('Invalid roomId or userId for joinRoom');
+    }
+
     await runTransaction(db, async (tx) => {
       const roomRef = doc(db, 'rooms', roomId);
       const roomSnap = await tx.get(roomRef);
@@ -155,11 +221,14 @@ class RoomService {
 
       // Access check for private room
       if (room.isPrivate) {
+        if (!joinKeyPlain) {
+          throw new Error('Join key required for private rooms');
+        }
         const secretRef = doc(db, 'rooms_secrets', roomId);
         const secretSnap = await tx.get(secretRef);
         const storedHash = secretSnap.exists() ? (secretSnap.data() as any).joinKeyHash : null;
-        const providedHash = joinKeyPlain ? await sha256(joinKeyPlain) : null;
-        if (!storedHash || !providedHash || storedHash !== providedHash) {
+        const providedHash = await sha256(joinKeyPlain);
+        if (!storedHash || storedHash !== providedHash) {
           throw new Error('Invalid join key');
         }
       }
@@ -167,13 +236,25 @@ class RoomService {
       const memberRef = doc(db, 'rooms', roomId, 'members', userId);
       const memberSnap = await tx.get(memberRef);
       if (!memberSnap.exists()) {
-        tx.set(memberRef, { uid: userId, role: 'member', joinedAt: serverTimestamp() });
-        tx.update(roomRef, { members: arrayUnion(userId), membersCount: increment(1), updatedAt: serverTimestamp() });
+        tx.set(memberRef, { 
+          uid: userId, 
+          role: 'member', 
+          joinedAt: serverTimestamp() 
+        });
+        tx.update(roomRef, { 
+          members: arrayUnion(userId), 
+          membersCount: increment(1), 
+          updatedAt: serverTimestamp() 
+        });
       }
     });
   }
 
-  async exitRoom(roomId: string, userId: string): Promise<void> {
+  async leaveRoom(roomId: string, userId: string): Promise<void> {
+    if (!roomId || !userId || typeof roomId !== 'string' || typeof userId !== 'string' || roomId.trim() === '' || userId.trim() === '') {
+      throw new Error('Invalid roomId or userId for leaveRoom');
+    }
+
     await runTransaction(db, async (tx) => {
       const roomRef = doc(db, 'rooms', roomId);
       const roomSnap = await tx.get(roomRef);
@@ -186,7 +267,12 @@ class RoomService {
       const role = (memberSnap.data() as RoomMember).role;
 
       tx.delete(memberRef);
-      tx.update(roomRef, { members: arrayRemove(userId), membersCount: increment(-1), updatedAt: serverTimestamp(), admins: role === 'admin' ? (room.admins || []).filter((a) => a !== userId) : room.admins });
+      tx.update(roomRef, { 
+        members: arrayRemove(userId), 
+        membersCount: increment(-1), 
+        updatedAt: serverTimestamp(), 
+        admins: role === 'admin' ? (room.admins || []).filter((a) => a !== userId) : room.admins 
+      });
 
       // If no admins remain but there are members, promote the earliest member
       const newAdmins = (room.admins || []).filter((a) => a !== userId);
@@ -196,28 +282,36 @@ class RoomService {
     });
   }
 
-  async deleteRoom(roomId: string, actorUid: string): Promise<void> {
-    // Soft client-side check; rules enforce as well
-    const room = await this.getRoom(roomId);
-    if (!room) throw new Error('Room not found');
-    if (!room.admins?.includes(actorUid)) throw new Error('Only admins can delete room');
+  async deleteRoom(roomId: string): Promise<void> {
+    if (!roomId || typeof roomId !== 'string' || roomId.trim() === '') {
+      throw new Error('Invalid roomId for deleteRoom');
+    }
 
-    // Delete messages
-    const msgsSnap = await (await import('firebase/firestore')).getDocs(collection(db, 'rooms', roomId, 'messages'));
-    await Promise.all(msgsSnap.docs.map((d) => deleteDoc(d.ref)));
+    try {
+      // Delete messages
+      const msgsSnap = await getDocs(collection(db, 'rooms', roomId, 'messages'));
+      await Promise.all(msgsSnap.docs.map((d) => deleteDoc(d.ref)));
 
     // Delete members
-    const memsSnap = await (await import('firebase/firestore')).getDocs(collection(db, 'rooms', roomId, 'members'));
+    const memsSnap = await getDocs(collection(db, 'rooms', roomId, 'members'));
     await Promise.all(memsSnap.docs.map((d) => deleteDoc(d.ref)));
 
     // Delete secret
     await deleteDoc(doc(db, 'rooms_secrets', roomId));
 
-    // Delete room
-    await deleteDoc(doc(db, 'rooms', roomId));
+      // Delete room
+      await deleteDoc(doc(db, 'rooms', roomId));
+    } catch (error) {
+      console.error('Error deleting room:', error);
+      throw error;
+    }
   }
 
   async grantAdmin(roomId: string, actorUid: string, targetUid: string): Promise<void> {
+    if (!roomId || !actorUid || !targetUid || typeof roomId !== 'string' || typeof actorUid !== 'string' || typeof targetUid !== 'string' || roomId.trim() === '' || actorUid.trim() === '' || targetUid.trim() === '') {
+      throw new Error('Invalid parameters for grantAdmin');
+    }
+
     await runTransaction(db, async (tx) => {
       const roomRef = doc(db, 'rooms', roomId);
       const roomSnap = await tx.get(roomRef);
@@ -234,32 +328,41 @@ class RoomService {
     });
   }
 
-  // New: room creator can change the join key/password
-  async updateJoinKey(roomId: string, actorUid: string, newJoinKeyPlain: string): Promise<void> {
-    const trimmed = newJoinKeyPlain.trim();
-    if (!trimmed) throw new Error('Join key cannot be empty');
+  async revokeAdmin(roomId: string, actorUid: string, targetUid: string): Promise<void> {
+    if (!roomId || !actorUid || !targetUid || typeof roomId !== 'string' || typeof actorUid !== 'string' || typeof targetUid !== 'string' || roomId.trim() === '' || actorUid.trim() === '' || targetUid.trim() === '') {
+      throw new Error('Invalid parameters for revokeAdmin');
+    }
 
-    const room = await this.getRoom(roomId);
-    if (!room) throw new Error('Room not found');
-    if (room.creatorId !== actorUid) throw new Error('Only the room host can change the password');
+    await runTransaction(db, async (tx) => {
+      const roomRef = doc(db, 'rooms', roomId);
+      const roomSnap = await tx.get(roomRef);
+      if (!roomSnap.exists()) throw new Error('Room not found');
+      const room = roomSnap.data() as Room;
+      if (!room.admins?.includes(actorUid)) throw new Error('Only admins can revoke admin');
+      if (targetUid === room.creatorId) throw new Error('Cannot revoke admin from room creator');
 
-    const hash = await sha256(trimmed);
-    const secretRef = doc(db, 'rooms_secrets', roomId);
-    await setDoc(secretRef, { joinKeyHash: hash, updatedAt: serverTimestamp(), creatorId: room.creatorId }, { merge: true });
-    // Ensure room is marked private when a key is set
-    await updateDoc(doc(db, 'rooms', roomId), { isPrivate: true, updatedAt: serverTimestamp() });
+      const memberRef = doc(db, 'rooms', roomId, 'members', targetUid);
+      const memberSnap = await tx.get(memberRef);
+      if (!memberSnap.exists()) throw new Error('Target is not a member');
+
+      tx.update(memberRef, { role: 'member' });
+      tx.update(roomRef, { admins: arrayRemove(targetUid), updatedAt: serverTimestamp() });
+    });
   }
 
-  // New: host can remove a specified member from the group
   async removeMember(roomId: string, actorUid: string, targetUid: string): Promise<void> {
+    if (!roomId || !actorUid || !targetUid || typeof roomId !== 'string' || typeof actorUid !== 'string' || typeof targetUid !== 'string' || roomId.trim() === '' || actorUid.trim() === '' || targetUid.trim() === '') {
+      throw new Error('Invalid parameters for removeMember');
+    }
+
     await runTransaction(db, async (tx) => {
       const roomRef = doc(db, 'rooms', roomId);
       const roomSnap = await tx.get(roomRef);
       if (!roomSnap.exists()) throw new Error('Room not found');
       const room = roomSnap.data() as Room;
 
-      if (room.creatorId !== actorUid) throw new Error('Only the room host can remove members');
-      if (targetUid === room.creatorId) throw new Error('Cannot remove the room host');
+      if (!room.admins?.includes(actorUid)) throw new Error('Only admins can remove members');
+      if (targetUid === room.creatorId) throw new Error('Cannot remove the room creator');
 
       const memberRef = doc(db, 'rooms', roomId, 'members', targetUid);
       const memberSnap = await tx.get(memberRef);
@@ -277,17 +380,11 @@ class RoomService {
     });
   }
 
-  listenToMessages(roomId: string, onUpdate: (messages: RoomMessage[]) => void): () => void {
-    const q = query(collection(db, 'rooms', roomId, 'messages'), orderBy('timestamp', 'asc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const list: RoomMessage[] = [];
-      snap.forEach((d) => list.push({ id: d.id, roomId, ...(d.data() as any) } as RoomMessage));
-      onUpdate(list);
-    });
-    return unsub;
-  }
-
   async sendMessage(roomId: string, senderId: string, text: string): Promise<void> {
+    if (!roomId || !senderId || !text || typeof roomId !== 'string' || typeof senderId !== 'string' || typeof text !== 'string' || roomId.trim() === '' || senderId.trim() === '') {
+      throw new Error('Invalid parameters for sendMessage');
+    }
+
     const trimmed = text.trim();
     if (!trimmed) return;
 
@@ -301,39 +398,82 @@ class RoomService {
     });
   }
 
-  subscribeToMyRooms(userId: string, onUpdate: (rooms: Room[]) => void): () => void {
-    const q = query(collection(db, 'rooms'), where('members', 'array-contains', userId));
-    const unsub = onSnapshot(q, (snap) => {
-      const list: Room[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Room) }));
-      // sort by updatedAt desc if present
-      list.sort((a: any, b: any) => {
-        const at = (a.updatedAt as any)?.toMillis ? (a.updatedAt as any).toMillis() : 0;
-        const bt = (b.updatedAt as any)?.toMillis ? (b.updatedAt as any).toMillis() : 0;
-        return bt - at;
+  async setTypingStatus(roomId: string, userId: string, isTyping: boolean): Promise<void> {
+    if (!roomId || !userId || typeof roomId !== 'string' || typeof userId !== 'string' || roomId.trim() === '' || userId.trim() === '') {
+      throw new Error('Invalid parameters for setTypingStatus');
+    }
+
+    // This would typically update a typing status in Firestore
+    // For now, we'll implement a simple version
+    if (isTyping) {
+      const typingRef = doc(db, 'rooms', roomId, 'typing', userId);
+      await setDoc(typingRef, { 
+        userId, 
+        timestamp: serverTimestamp() 
       });
-      onUpdate(list);
-    });
-    return unsub;
+    } else {
+      const typingRef = doc(db, 'rooms', roomId, 'typing', userId);
+      await deleteDoc(typingRef);
+    }
+  }
+
+  subscribeToMyRooms(userId: string, onUpdate: (rooms: Room[]) => void): () => void {
+    if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+      console.error('Invalid userId for subscribeToMyRooms:', userId);
+      return () => {};
+    }
+    
+    try {
+      const q = query(collection(db, 'rooms'), where('members', 'array-contains', userId));
+      const unsub = onSnapshot(q, (snap) => {
+        const list: Room[] = [];
+        snap.forEach((d) => list.push({ ...(d.data() as Room), id: d.id }));
+        // sort by updatedAt desc if present
+        list.sort((a: any, b: any) => {
+          const at = (a.updatedAt as any)?.toMillis ? (a.updatedAt as any).toMillis() : 0;
+          const bt = (b.updatedAt as any)?.toMillis ? (b.updatedAt as any).toMillis() : 0;
+          return bt - at;
+        });
+        onUpdate(list);
+      });
+      return unsub;
+    } catch (error) {
+      console.error('Error subscribing to my rooms:', error);
+      return () => {};
+    }
   }
 
   subscribeToAllRooms(onUpdate: (rooms: Room[]) => void): () => void {
-    const q = query(collection(db, 'rooms'), orderBy('updatedAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const now = Date.now();
-      const list: Room[] = [];
-      snap.forEach((d) => {
-        const r = { id: d.id, ...(d.data() as Room) } as any;
-        const endsAtMs = (r.endsAt as any)?.toMillis?.() || (r.endsAt as any);
-        if (r.isTemporary && endsAtMs && endsAtMs <= now) {
-          // skip expired temp rooms
-          return;
-        }
-        list.push(r);
+    try {
+      // Remove orderBy to avoid index issues - will sort client-side
+      const q = query(collection(db, 'rooms'));
+      const unsub = onSnapshot(q, (snap) => {
+        const now = Date.now();
+        const list: Room[] = [];
+        snap.forEach((d) => {
+          const r = { ...(d.data() as Room), id: d.id } as any;
+          const endsAtMs = (r.endsAt as any)?.toMillis?.() || (r.endsAt as any);
+          if (r.isTemporary && endsAtMs && endsAtMs <= now) {
+            // skip expired temp rooms
+            return;
+          }
+          list.push(r);
+        });
+        
+        // Sort client-side by updatedAt desc
+        list.sort((a: any, b: any) => {
+          const at = (a.updatedAt as any)?.toMillis ? (a.updatedAt as any).toMillis() : 0;
+          const bt = (b.updatedAt as any)?.toMillis ? (b.updatedAt as any).toMillis() : 0;
+          return bt - at;
+        });
+        
+        onUpdate(list);
       });
-      onUpdate(list);
-    });
-    return unsub;
+      return unsub;
+    } catch (error) {
+      console.error('Error subscribing to all rooms:', error);
+      return () => {};
+    }
   }
 
   isRoomExpired(room: Room | (Room & { endsAt?: any })): boolean {
@@ -341,6 +481,12 @@ class RoomService {
     const endsAtMs = (room as any)?.endsAt?.toMillis?.() || (room as any)?.endsAt;
     return !!endsAtMs && endsAtMs <= Date.now();
   }
+
+  // Legacy methods for backward compatibility
+  listenToRoom = this.subscribeToRoom;
+  listenToMembers = this.subscribeToRoomMembers;
+  listenToMessages = this.subscribeToRoomMessages;
+  exitRoom = this.leaveRoom;
 }
 
 export const roomService = new RoomService(); 

@@ -6,10 +6,10 @@ import {
   Dimensions,
   ActivityIndicator,
   Animated,
+  Text,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
-import { Text } from 'react-native';
 import { ImageUtils } from '../utils/imageUtils';
 import { Image } from 'expo-image';
 
@@ -26,6 +26,7 @@ const PostImageStack: React.FC<PostImageStackProps> = ({ media, onImagePress }) 
   const [imageErrors, setImageErrors] = useState<{ [key: number]: boolean }>({});
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
+  // Early return for empty media
   if (!media || media.length === 0) {
     return null;
   }
@@ -107,7 +108,7 @@ const PostImageStack: React.FC<PostImageStackProps> = ({ media, onImagePress }) 
   const renderMediaItem = (uri: string, index: number) => {
     if (isVideo(uri)) {
       return (
-        <View key={index} style={styles.mediaContainer}>
+        <View style={styles.mediaContainer}>
           <Video
             source={{ uri }}
             style={styles.media}
@@ -135,18 +136,17 @@ const PostImageStack: React.FC<PostImageStackProps> = ({ media, onImagePress }) 
     }
 
     return (
-      <View key={index} style={styles.mediaContainer}>
+      <View style={styles.mediaContainer}>
         <Animated.View style={{ opacity: index === currentIndex ? fadeAnim : 1 }}>
           <Image
             source={{ uri }}
-            style={styles.media}
+            style={[styles.media, { backgroundColor: '#f0f0f0' }]}
             contentFit="cover"
             onLoadStart={() => handleImageLoadStart(index)}
             onLoad={() => handleImageLoadEnd(index)}
             onError={() => handleImageError(index)}
             cachePolicy="disk"
             transition={200}
-            placeholder={require('../../assets/icon.png') as any}
           />
         </Animated.View>
         

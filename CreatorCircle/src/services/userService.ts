@@ -1,4 +1,4 @@
-import { doc, setDoc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { User, Profile } from '../types';
 import { ProfileImageService } from './profileImageService';
@@ -37,6 +37,7 @@ export class UserService {
         loginStreak: profileData.loginStreak ?? 0,
         lastActivityAt: profileData.lastActivityAt || new Date(),
         lastDecayAppliedAt: profileData.lastDecayAppliedAt || undefined,
+        aiApiKey: profileData.aiApiKey || '',
       };
 
       await setDoc(userRef, profile, { merge: true });
@@ -262,6 +263,97 @@ export class UserService {
     } catch (error) {
       console.error('Error searching users:', error);
       return [];
+    }
+  }
+
+  static async deleteUserAccount(userId: string): Promise<void> {
+    try {
+      console.log(`🗑️ Starting account deletion for user: ${userId}`);
+      
+      const batch = writeBatch(db);
+      
+      // 1. Delete user profile
+      const userRef = doc(db, 'users', userId);
+      batch.delete(userRef);
+      
+      // 2. Delete user's posts
+      const postsQuery = query(collection(db, 'posts'), where('userId', '==', userId));
+      const postsSnapshot = await getDocs(postsQuery);
+      postsSnapshot.forEach((postDoc) => {
+        batch.delete(postDoc.ref);
+      });
+      
+      // 3. Chat deletion removed - will be handled by new chat system
+      
+      // 4. Delete collaboration requests
+      const collabQuery = query(
+        collection(db, 'collaborationRequests'),
+        where('senderId', '==', userId)
+      );
+      const collabSnapshot = await getDocs(collabQuery);
+      collabSnapshot.forEach((collabDoc) => {
+        batch.delete(collabDoc.ref);
+      });
+      
+      // 5. Delete user reports
+      const reportsQuery = query(
+        collection(db, 'userReports'),
+        where('reporterId', '==', userId)
+      );
+      const reportsSnapshot = await getDocs(reportsQuery);
+      reportsSnapshot.forEach((reportDoc) => {
+        batch.delete(reportDoc.ref);
+      });
+      
+      // 6. Chat settings deletion removed - will be handled by new chat system
+      
+      // 7. Delete AI service data
+      const aiServiceQuery = query(
+        collection(db, 'aiService'),
+        where('userId', '==', userId)
+      );
+      const aiServiceSnapshot = await getDocs(aiServiceQuery);
+      aiServiceSnapshot.forEach((aiDoc) => {
+        batch.delete(aiDoc.ref);
+      });
+      
+      // 8. Delete follow relationships
+      const followQuery = query(
+        collection(db, 'follows'),
+        where('followerId', '==', userId)
+      );
+      const followSnapshot = await getDocs(followQuery);
+      followSnapshot.forEach((followDoc) => {
+        batch.delete(followDoc.ref);
+      });
+      
+      // 9. Delete XP and achievements
+      const xpQuery = query(
+        collection(db, 'userXP'),
+        where('userId', '==', userId)
+      );
+      const xpSnapshot = await getDocs(xpQuery);
+      xpSnapshot.forEach((xpDoc) => {
+        batch.delete(xpDoc.ref);
+      });
+      
+      // 10. Delete search history
+      const searchQuery = query(
+        collection(db, 'searchHistory'),
+        where('userId', '==', userId)
+      );
+      const searchSnapshot = await getDocs(searchQuery);
+      searchSnapshot.forEach((searchDoc) => {
+        batch.delete(searchDoc.ref);
+      });
+      
+      // Execute all deletions in a single batch
+      await batch.commit();
+      
+      console.log(`✅ Account deletion completed for user: ${userId}`);
+    } catch (error) {
+      console.error('❌ Error deleting user account:', error);
+      throw new Error('Failed to delete user account. Please try again.');
     }
   }
 } 

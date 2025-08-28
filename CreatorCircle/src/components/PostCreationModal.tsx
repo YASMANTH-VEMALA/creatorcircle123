@@ -17,6 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
 import { useAuth } from '../contexts/AuthContext';
 import { PostService } from '../services/postService';
+import { SpotlightService } from '../services/spotlightService';
 import { ProfileValidationService } from '../services/profileValidationService';
 import { UserService } from '../services/userService';
 import { ProfileImageService } from '../services/profileImageService';
@@ -41,6 +42,7 @@ const PostCreationModal: React.FC<PostCreationModalProps> = ({
   const [emoji, setEmoji] = useState('');
   const [images, setImages] = useState<string[]>([]);
   const [videos, setVideos] = useState<string[]>([]);
+  const [postType, setPostType] = useState<'post' | 'spotlight'>('post');
   const [isCreating, setIsCreating] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [characterCount, setCharacterCount] = useState(0);
@@ -75,6 +77,7 @@ const PostCreationModal: React.FC<PostCreationModalProps> = ({
     setEmoji('');
     setImages([]);
     setVideos([]);
+    setPostType('post');
     setIsCreating(false);
   };
 
@@ -203,16 +206,40 @@ const PostCreationModal: React.FC<PostCreationModalProps> = ({
     setIsCreating(true);
 
     try {
-      // Create the post (PostService will handle media uploads)
-      await PostService.createPost(
-        user.uid,
-        content.trim(),
-        images,
-        videos,
-        emoji || undefined
-      );
-
-      Alert.alert('Success', 'Post created successfully!');
+      if (postType === 'spotlight') {
+        // Validate Spotlight post requirements
+        if (videos.length === 0) {
+          Alert.alert('Error', 'Spotlight posts must include a video');
+          setIsCreating(false);
+          return;
+        }
+        
+        // Create Spotlight post
+        const videoUri = videos[0];
+        await SpotlightService.createSpotlightPost({
+          userId: user.uid,
+          videoURL: videoUri,
+          caption: content.trim(),
+          duration: 0, // You can calculate actual duration if needed
+          isPublic: true,
+          tags: content.match(/#\w+/g)?.map(tag => tag.substring(1)) || [],
+          mentions: content.match(/@\w+/g)?.map(mention => mention.substring(1)) || [],
+        });
+        
+        Alert.alert('Success', 'Spotlight post created successfully!');
+      } else {
+        // Create regular post
+        await PostService.createPost(
+          user.uid,
+          content.trim(),
+          images,
+          videos,
+          emoji || undefined
+        );
+        
+        Alert.alert('Success', 'Post created successfully!');
+      }
+      
       onPostCreated();
       resetForm();
       onClose();
@@ -322,6 +349,31 @@ const PostCreationModal: React.FC<PostCreationModalProps> = ({
           </View>
         </View>
 
+        {/* Post Type Selection */}
+        <View style={styles.postTypeSection}>
+          <Text style={styles.postTypeLabel}>Post Type:</Text>
+          <View style={styles.postTypeButtons}>
+            <TouchableOpacity
+              style={[styles.postTypeButton, postType === 'post' && styles.postTypeButtonActive]}
+              onPress={() => setPostType('post')}
+            >
+              <Ionicons name="document-text" size={20} color={postType === 'post' ? 'white' : '#666'} />
+              <Text style={[styles.postTypeButtonText, postType === 'post' && styles.postTypeButtonTextActive]}>
+                Regular Post
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.postTypeButton, postType === 'spotlight' && styles.postTypeButtonActive]}
+              onPress={() => setPostType('spotlight')}
+            >
+              <Ionicons name="flash" size={20} color={postType === 'spotlight' ? 'white' : '#FF6B35'} />
+              <Text style={[styles.postTypeButtonText, postType === 'spotlight' && styles.postTypeButtonTextActive]}>
+                Spotlight
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Content */}
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Text Input */}
@@ -377,18 +429,18 @@ const PostCreationModal: React.FC<PostCreationModalProps> = ({
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={[styles.mediaButton, videos.length >= MAX_VIDEOS && styles.mediaButtonDisabled]} 
+              style={[styles.mediaButton, videos.length >= (postType === 'spotlight' ? 1 : MAX_VIDEOS) && styles.mediaButtonDisabled]} 
               onPress={pickVideo}
-              disabled={videos.length >= MAX_VIDEOS}
+              disabled={videos.length >= (postType === 'spotlight' ? 1 : MAX_VIDEOS)}
             >
-              <View style={[styles.mediaButtonIcon, { backgroundColor: '#FF5722' }]}>
-                <Ionicons name="videocam" size={20} color="white" />
+              <View style={[styles.mediaButtonIcon, { backgroundColor: postType === 'spotlight' ? '#FF6B35' : '#FF5722' }]}>
+                <Ionicons name={postType === 'spotlight' ? 'flash' : 'videocam'} size={20} color="white" />
               </View>
               <View style={styles.mediaButtonContent}>
-                <Text style={[styles.mediaButtonText, videos.length >= MAX_VIDEOS && styles.mediaButtonTextDisabled]}>
-                  Videos
+                <Text style={[styles.mediaButtonText, videos.length >= (postType === 'spotlight' ? 1 : MAX_VIDEOS) && styles.mediaButtonTextDisabled]}>
+                  {postType === 'spotlight' ? 'Spotlight Video' : 'Videos'}
                 </Text>
-                <Text style={styles.mediaButtonCount}>{videos.length}/{MAX_VIDEOS}</Text>
+                <Text style={styles.mediaButtonCount}>{videos.length}/{postType === 'spotlight' ? 1 : MAX_VIDEOS}</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -676,6 +728,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginLeft: 8,
+  },
+  postTypeSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  postTypeLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  postTypeButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  postTypeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  postTypeButtonActive: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  postTypeButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+    marginLeft: 8,
+  },
+  postTypeButtonTextActive: {
+    color: 'white',
   },
 });
 

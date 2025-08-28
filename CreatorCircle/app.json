@@ -75,15 +75,32 @@
         }
       ],
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ffffff",
+          "sounds": ["./assets/notification-sound.wav"]
+        }
+      ],
+      [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.YOUR_IOS_CLIENT_ID"
+          "iosUrlScheme": "com.googleusercontent.apps.775288481200-14u6gn5nhjiaa605hc2h820ecqrt02b1",
+          "androidClientId": "775288481200-fphbnkv4q46ne9i5gnn5h4fhrqbjf9hr.apps.googleusercontent.com"
         }
       ]
     ],
     "extra": {
       "eas": {
         "projectId": "2e7483c9-5177-454f-90aa-c9256c1ff52f"
+      },
+      "googleOAuth": {
+        "clientId": "775288481200-14u6gn5nhjiaa605hc2h820ecqrt02b1.apps.googleusercontent.com",
+        "redirectUris": [
+          "creatorcircle://auth/callback",
+          "http://localhost:3000/auth/callback",
+          "https://creatorcircle.app/auth/callback"
+        ]
       }
     },
     "owner": "yasmanthvemala"

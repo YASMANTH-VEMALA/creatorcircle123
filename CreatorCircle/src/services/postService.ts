@@ -144,12 +144,24 @@ export class PostService {
           const posts: Post[] = [];
           snapshot.forEach((doc) => {
             const data = doc.data();
+            
+            // Validate that data exists and has required fields
+            if (!data || !data.userId || typeof data.userId !== 'string' || data.userId.trim() === '') {
+              console.warn(`⚠️ Skipping invalid post ${doc.id}: missing or invalid userId`);
+              return;
+            }
+            
             console.log(`📝 Processing post ${doc.id}:`, {
               userId: data.userId,
               userAvatar: data.userAvatar,
               images: data.images?.length || 0
             });
 
+            // Filter out Spotlight posts from regular feed
+            if (data.postType === 'spotlight') {
+              return; // Skip Spotlight posts
+            }
+            
             // Clean and validate post data
             const cleanedPost = this.cleanPostData(data, doc.id);
             posts.push(cleanedPost);
@@ -179,6 +191,13 @@ export class PostService {
    */
   static subscribeToUserPosts(userId: string, callback: (posts: Post[]) => void) {
     try {
+      // Validate userId parameter
+      if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+        console.error('❌ Invalid userId for subscribeToUserPosts:', userId);
+        callback([]);
+        return () => {};
+      }
+      
       console.log(`📡 Subscribing to posts for user: ${userId}`);
       const q = query(
         collection(db, 'posts'),
@@ -186,20 +205,35 @@ export class PostService {
       );
       
       return onSnapshot(q, (snapshot) => {
-        const posts: Post[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          const cleanedPost = this.cleanPostData(data, doc.id);
-          posts.push(cleanedPost);
-        });
-        
-        // Sort posts by creation date (newest first) in JavaScript
-        posts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-        
-        callback(posts);
+        try {
+          const posts: Post[] = [];
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+            
+            // Validate that data exists and has required fields
+            if (!data || !data.userId || typeof data.userId !== 'string' || data.userId.trim() === '') {
+              console.warn(`⚠️ Skipping invalid post ${doc.id}: missing or invalid userId`);
+              return;
+            }
+            
+            const cleanedPost = this.cleanPostData(data, doc.id);
+            posts.push(cleanedPost);
+          });
+          
+          // Sort posts by creation date (newest first) in JavaScript
+          posts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+          
+          callback(posts);
+        } catch (error) {
+          console.error('❌ Error processing user posts:', error);
+          callback([]);
+        }
+      }, (error) => {
+        console.error('❌ Error subscribing to user posts:', error);
+        callback([]);
       });
     } catch (error) {
-      console.error('❌ Error subscribing to user posts:', error);
+      console.error('❌ Error setting up user posts subscription:', error);
       return () => {};
     }
   }
@@ -207,55 +241,67 @@ export class PostService {
   /**
    * Clean and validate post data
    */
-  private static cleanPostData(data: any, docId: string): Post {
-    // Clean user avatar
-    let userAvatar = data.userAvatar || '';
-    if (!userAvatar || userAvatar.trim() === '' || ProfileImageService.isLocalFile(userAvatar)) {
-      console.warn(`⚠️ Invalid user avatar in post ${docId}: ${userAvatar}`);
-      userAvatar = ProfileImageService.getDefaultImageUrl('profile');
+  private static cleanPostData(data: any, postId: string): Post {
+    // Ensure data exists and has required fields
+    if (!data) {
+      console.warn(`⚠️ No data found for post ${postId}`);
+      data = {};
     }
-
-    // Clean post images
-    let images = data.images || [];
-    if (Array.isArray(images)) {
-      images = images.map((image: string) => {
-        if (!image || image.trim() === '' || ProfileImageService.isLocalFile(image)) {
-          console.warn(`⚠️ Invalid post image in post ${docId}: ${image}`);
-          return ProfileImageService.getDefaultImageUrl('postImage');
-        }
-        return image;
-      });
+    
+    // Ensure userId is always a valid string
+    const userId = data.userId && typeof data.userId === 'string' && data.userId.trim() !== '' 
+      ? data.userId.trim() 
+      : 'unknown_user';
+    
+    // Ensure arrays are always arrays
+    const images = Array.isArray(data.images) ? data.images : [];
+    const videos = Array.isArray(data.videos) ? data.videos : [];
+    const reactions = data.reactions && typeof data.reactions === 'object' ? data.reactions : {};
+    
+    // Ensure numbers are always numbers
+    const likes = typeof data.likes === 'number' && !isNaN(data.likes) ? data.likes : 0;
+    const comments = typeof data.comments === 'number' && !isNaN(data.comments) ? data.comments : 0;
+    const reports = typeof data.reports === 'number' && !isNaN(data.reports) ? data.reports : 0;
+    
+    // Ensure booleans are always booleans
+    const isEdited = typeof data.isEdited === 'boolean' ? data.isEdited : false;
+    
+    // Ensure dates are always valid dates
+    let createdAt: Date;
+    try {
+      createdAt = data.createdAt?.toDate?.() || new Date(data.createdAt) || new Date();
+      if (isNaN(createdAt.getTime())) createdAt = new Date();
+    } catch {
+      createdAt = new Date();
     }
-
-    // Clean post videos
-    let videos = data.videos || [];
-    if (Array.isArray(videos)) {
-      videos = videos.map((video: string) => {
-        if (!video || video.trim() === '' || ProfileImageService.isLocalFile(video)) {
-          console.warn(`⚠️ Invalid post video in post ${docId}: ${video}`);
-          return ProfileImageService.getDefaultImageUrl('postImage');
-        }
-        return video;
-      });
+    
+    let updatedAt: Date;
+    try {
+      updatedAt = data.updatedAt?.toDate?.() || new Date(data.updatedAt) || new Date();
+      if (isNaN(updatedAt.getTime())) updatedAt = new Date();
+    } catch {
+      updatedAt = new Date();
     }
-
+    
     return {
-      id: docId,
-      userId: data.userId,
-      userName: data.userName || 'Anonymous',
-      userAvatar,
-      userCollege: data.userCollege || '',
-      content: data.content || '',
+      id: postId,
+      userId,
+      userName: data.userName && typeof data.userName === 'string' ? data.userName : 'Anonymous',
+      userCollege: data.userCollege && typeof data.userCollege === 'string' ? data.userCollege : '',
+      userAvatar: data.userAvatar && typeof data.userAvatar === 'string' ? data.userAvatar : ProfileImageService.getDefaultImageUrl('profile'),
+      userVerifiedBadge: data.userVerifiedBadge && typeof data.userVerifiedBadge === 'string' ? data.userVerifiedBadge : 'none',
+      content: data.content && typeof data.content === 'string' ? data.content : '',
+      emoji: data.emoji && typeof data.emoji === 'string' ? data.emoji : null,
       images,
       videos,
-      emoji: data.emoji || '',
-      likes: data.likes || 0,
-      comments: data.comments || 0,
-      reports: data.reports || 0,
-      isEdited: data.isEdited || false,
-      createdAt: data.createdAt?.toDate() || new Date(),
-      updatedAt: data.updatedAt?.toDate() || new Date(),
-    } as Post;
+      likes,
+      comments,
+      reports,
+      reactions,
+      isEdited,
+      createdAt,
+      updatedAt,
+    };
   }
 
   /**
@@ -419,6 +465,11 @@ export class PostService {
             userAvatar: data.userAvatar || ProfileImageService.getDefaultImageUrl('profile'),
             content: data.content,
             createdAt: data.createdAt?.toDate() || new Date(),
+            replyToCommentId: data.replyToCommentId || undefined,
+            replyToUserName: data.replyToUserName || undefined,
+            likes: data.likes || 0,
+            isEdited: data.isEdited || false,
+            editedAt: data.editedAt?.toDate() || undefined,
           } as Comment);
         });
         
@@ -434,6 +485,27 @@ export class PostService {
   }
 
   /**
+   * Subscribe to post updates (likes, comments count) in real-time
+   */
+  static subscribeToPostUpdates(
+    postId: string, 
+    callback: (updates: { likes: number; comments: number; reactions?: { [emoji: string]: number } }) => void
+  ) {
+    const postRef = doc(db, 'posts', postId);
+    
+    return onSnapshot(postRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        callback({
+          likes: data.likes || 0,
+          comments: data.comments || 0,
+          reactions: data.reactions || {}
+        });
+      }
+    });
+  }
+
+  /**
    * Add a comment to a post
    */
   static async addComment(
@@ -441,7 +513,9 @@ export class PostService {
     userId: string,
     userName: string,
     userAvatar: string,
-    content: string
+    content: string,
+    replyToCommentId?: string,
+    replyToUserName?: string
   ): Promise<void> {
     try {
       const commentData = {
@@ -449,7 +523,12 @@ export class PostService {
         userName,
         userAvatar,
         content: content.trim(),
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        replyToCommentId: replyToCommentId || null,
+        replyToUserName: replyToUserName || null,
+        likes: 0,
+        isEdited: false,
+        editedAt: null
       };
 
       await addDoc(collection(db, 'posts', postId, 'comments'), commentData);
@@ -476,6 +555,52 @@ export class PostService {
     } catch (error) {
       console.error('Error adding comment:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Toggle like on a comment
+   */
+  static async toggleCommentLike(postId: string, commentId: string, userId: string): Promise<void> {
+    try {
+      const likeRef = doc(db, 'posts', postId, 'comments', commentId, 'likes', userId);
+      const likeDoc = await getDoc(likeRef);
+      const commentRef = doc(db, 'posts', postId, 'comments', commentId);
+      
+      if (likeDoc.exists()) {
+        // Unlike - remove like document and decrement count
+        await deleteDoc(likeRef);
+        await updateDoc(commentRef, {
+          likes: increment(-1)
+        });
+        console.log('✅ Comment unliked successfully');
+      } else {
+        // Like - create like document and increment count
+        await setDoc(likeRef, {
+          userId,
+          timestamp: serverTimestamp()
+        });
+        await updateDoc(commentRef, {
+          likes: increment(1)
+        });
+        console.log('✅ Comment liked successfully');
+      }
+    } catch (error) {
+      console.error('Error toggling comment like:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if user has liked a comment
+   */
+  static async hasUserLikedComment(postId: string, commentId: string, userId: string): Promise<boolean> {
+    try {
+      const likeDoc = await getDoc(doc(db, 'posts', postId, 'comments', commentId, 'likes', userId));
+      return likeDoc.exists();
+    } catch (error) {
+      console.error('Error checking comment like status:', error);
+      return false;
     }
   }
 
@@ -563,6 +688,12 @@ export class PostService {
    */
   static async getUserPostCount(userId: string): Promise<number> {
     try {
+      // Validate userId parameter
+      if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+        console.error('❌ Invalid userId for getUserPostCount:', userId);
+        return 0;
+      }
+      
       const q = query(
         collection(db, 'posts'),
         where('userId', '==', userId)
@@ -572,6 +703,103 @@ export class PostService {
     } catch (error) {
       console.error('Error getting user post count:', error);
       return 0;
+    }
+  }
+
+  /**
+   * Toggle a reaction on a post
+   */
+  static async toggleReaction(
+    postId: string,
+    userId: string,
+    reactionEmoji: string
+  ): Promise<void> {
+    try {
+      const reactionRef = doc(db, 'posts', postId, 'reactions', userId);
+      const reactionDoc = await getDoc(reactionRef);
+      
+      if (reactionDoc.exists()) {
+        const currentReaction = reactionDoc.data()?.emoji;
+        if (currentReaction === reactionEmoji) {
+          // Remove reaction if same emoji
+          await deleteDoc(reactionRef);
+          
+          // Decrease reaction count
+          await updateDoc(doc(db, 'posts', postId), {
+            [`reactions.${reactionEmoji}`]: increment(-1),
+            likes: increment(-1)
+          });
+        } else {
+          // Change reaction
+          await setDoc(reactionRef, {
+            emoji: reactionEmoji,
+            userId,
+            timestamp: serverTimestamp()
+          });
+          
+          // Update reaction counts
+          const batch = writeBatch(db);
+          if (currentReaction) {
+            batch.update(doc(db, 'posts', postId), {
+              [`reactions.${currentReaction}`]: increment(-1)
+            });
+          }
+          batch.update(doc(db, 'posts', postId), {
+            [`reactions.${reactionEmoji}`]: increment(1)
+          });
+          await batch.commit();
+        }
+      } else {
+        // Add new reaction
+        await setDoc(reactionRef, {
+          emoji: reactionEmoji,
+          userId,
+          timestamp: serverTimestamp()
+        });
+        
+        // Increase reaction count
+        await updateDoc(doc(db, 'posts', postId), {
+          [`reactions.${reactionEmoji}`]: increment(1),
+          likes: increment(1)
+        });
+      }
+      
+      console.log('✅ Reaction toggled successfully');
+    } catch (error) {
+      console.error('❌ Error toggling reaction:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get reactions for a post
+   */
+  static async getPostReactions(postId: string): Promise<{ [emoji: string]: number }> {
+    try {
+      const postDoc = await getDoc(doc(db, 'posts', postId));
+      if (postDoc.exists()) {
+        return postDoc.data()?.reactions || {};
+      }
+      return {};
+    } catch (error) {
+      console.error('Error getting post reactions:', error);
+      return {};
+    }
+  }
+
+  /**
+   * Get user's reaction for a post
+   */
+  static async getUserReaction(postId: string, userId: string): Promise<string | null> {
+    try {
+      const reactionDoc = await getDoc(doc(db, 'posts', postId, 'reactions', userId));
+      if (reactionDoc.exists()) {
+        return reactionDoc.data()?.emoji || null;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error getting user reaction:', error);
+      return null;
     }
   }
 } 

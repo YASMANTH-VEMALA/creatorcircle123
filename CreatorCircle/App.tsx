@@ -1,23 +1,72 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { UserService } from './src/services/userService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { locationService } from './src/services/locationService';
+import { navigationRef } from './src/navigation/navigationRef';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
+// Conditionally import expo-notifications to avoid Android issues
+let Notifications: any = null;
+try {
+  Notifications = require('expo-notifications');
+} catch (error) {
+  console.warn('expo-notifications not available:', error);
+}
+
+// Define a safe type for notification subscription
+type NotificationSubscription = any;
+
+// Configure notification handler for better UX
+if (Notifications) {
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async (notification: any) => {
+        try {
+          // Handle notification when app is in foreground
+          const { data } = notification.request.content;
+          
+          // Return appropriate response based on notification type
+          return {
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: true,
+            shouldShowBanner: true,
+            shouldShowList: true,
+          };
+        } catch (error) {
+          console.warn('Error in notification handler:', error);
+          // Return default response on error
+          return {
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+            shouldShowBanner: true,
+            shouldShowList: true,
+          };
+        }
+      },
+    });
+  } catch (error) {
+    console.warn('Failed to set notification handler:', error);
+  }
+}
 
 async function registerForPushNotificationsAsync(): Promise<string | null> {
+  if (!Notifications) {
+    console.warn('Notifications not available, skipping push registration');
+    return null;
+  }
+
   try {
+    // Check if we're on a supported platform
+    if (Platform.OS === 'web') {
+      console.warn('Web platform not supported for push notifications');
+      return null;
+    }
+
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== 'granted') {
@@ -56,12 +105,17 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
     const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
 
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'default',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
-      });
+      try {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF231F7C',
+        });
+      } catch (error) {
+        console.warn('Failed to set Android notification channel:', error);
+        // Continue without the channel - notifications will still work
+      }
     }
 
     console.log('Push notification token obtained:', token);
@@ -74,9 +128,103 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
 
 const PushRegistration: React.FC = () => {
   const { user } = useAuth();
+  const notificationListener = useRef<NotificationSubscription | null>(null);
+  const responseListener = useRef<NotificationSubscription | null>(null);
+
+  // Handle notification response and navigate accordingly
+  const handleNotificationResponse = async (data: any) => {
+    try {
+      console.log('🔔 Push notification response received:', data);
+      
+      if (!data) {
+        console.log('No data in notification response');
+        return;
+      }
+
+      const { type, relatedPostId, senderId, relatedCommentId } = data;
+      console.log('Notification data:', { type, relatedPostId, senderId, relatedCommentId });
+      
+      // Use the navigation reference to navigate
+      if (!navigationRef.current) {
+        console.warn('Navigation not ready yet, storing post ID for later');
+        // Store the post ID even if navigation isn't ready
+        if (relatedPostId && (type === 'like' || type === 'comment' || type === 'comment_reply' || type === 'comment_like' || type === 'report_warning')) {
+          try {
+            await AsyncStorage.setItem('cc.pendingPostPreview', relatedPostId);
+            console.log('Stored post ID for later preview:', relatedPostId);
+          } catch (error) {
+            console.error('Error storing pending post preview:', error);
+          }
+        }
+        return;
+      }
+
+      // Navigate based on notification type
+      switch (type) {
+        case 'like':
+        case 'comment':
+        case 'comment_reply':
+        case 'comment_like':
+          if (relatedPostId) {
+            console.log('Storing post ID for preview modal:', relatedPostId);
+            // Store the post ID for preview modal
+            try {
+              await AsyncStorage.setItem('cc.pendingPostPreview', relatedPostId);
+              console.log('Successfully stored post ID for preview');
+            } catch (error) {
+              console.error('Error storing pending post preview:', error);
+            }
+            // Navigate to notifications screen which will show the post preview modal
+            console.log('Navigating to notifications screen');
+            navigationRef.current.navigate('Notifications');
+          } else {
+            console.log('No related post ID found for notification type:', type);
+            navigationRef.current.navigate('Notifications');
+          }
+          break;
+          
+        case 'collab_request':
+        case 'request_accepted':
+        case 'request_rejected':
+          if (senderId) {
+            console.log('Navigating to user profile:', senderId);
+            navigationRef.current.navigate('UserProfile', { userId: senderId });
+          } else {
+            console.log('No sender ID found, navigating to notifications');
+            navigationRef.current.navigate('Notifications');
+          }
+          break;
+          
+        case 'report_warning':
+          if (relatedPostId) {
+            console.log('Storing post ID for report warning preview:', relatedPostId);
+            try {
+              await AsyncStorage.setItem('cc.pendingPostPreview', relatedPostId);
+            } catch (error) {
+              console.error('Error storing pending post preview:', error);
+            }
+            navigationRef.current.navigate('Notifications');
+          } else {
+            console.log('No related post ID for report warning, navigating to notifications');
+            navigationRef.current.navigate('Notifications');
+          }
+          break;
+          
+        default:
+          console.log('Unknown notification type, navigating to notifications:', type);
+          navigationRef.current.navigate('Notifications');
+      }
+    } catch (error) {
+      console.error('❌ Error handling notification response:', error);
+      // Fallback: navigate to notifications screen
+      if (navigationRef.current) {
+        navigationRef.current.navigate('Notifications');
+      }
+    }
+  };
 
   useEffect(() => {
-    let subscription: Notifications.Subscription | null = null;
+    let subscription: NotificationSubscription | null = null;
 
     const init = async () => {
       try {
@@ -86,10 +234,29 @@ const PushRegistration: React.FC = () => {
           console.log('Push token saved to user profile');
         }
 
-        // Optional: listen to notifications received while app is foregrounded
-        subscription = Notifications.addNotificationReceivedListener((notification) => {
-          console.log('Notification received in foreground:', notification);
-        });
+        // Listen to notifications received while app is foregrounded
+        if (Notifications) {
+          try {
+            subscription = Notifications.addNotificationReceivedListener((notification: any) => {
+              console.log('Notification received in foreground:', notification);
+              // You can add custom handling here if needed
+            });
+          } catch (error) {
+            console.warn('Failed to add notification received listener:', error);
+          }
+
+          // Listen to notification responses (when user taps notification)
+          try {
+            responseListener.current = Notifications.addNotificationResponseReceivedListener((response: any) => {
+              console.log('Notification response received:', response);
+              
+              const { data } = response.notification.request.content;
+              handleNotificationResponse(data);
+            });
+          } catch (error) {
+            console.warn('Failed to add notification response listener:', error);
+          }
+        }
       } catch (error) {
         console.error('Error in push registration:', error);
       }
@@ -98,8 +265,19 @@ const PushRegistration: React.FC = () => {
     init();
 
     return () => {
-      if (subscription) {
-        Notifications.removeNotificationSubscription(subscription);
+      if (subscription && Notifications) {
+        try {
+          Notifications.removeNotificationSubscription(subscription);
+        } catch (error) {
+          console.warn('Error removing notification subscription:', error);
+        }
+      }
+      if (responseListener.current && Notifications) {
+        try {
+          Notifications.removeNotificationSubscription(responseListener.current);
+        } catch (error) {
+          console.warn('Error removing response listener:', error);
+        }
       }
     };
   }, [user?.uid]);

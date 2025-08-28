@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Post, Profile } from '../types';
 import { PostService } from '../services/postService';
 import { UserService } from '../services/userService';
-import { NotificationService } from '../services/notificationService';
+import { notificationService } from '../services/notificationService';
 
 interface PostEditModalProps {
   visible: boolean;
@@ -178,12 +178,13 @@ const PostEditModal: React.FC<PostEditModalProps> = ({
           );
           
           if (mentionedUser && mentionedUser.uid !== post.userId) {
-            await NotificationService.createMentionNotification(
-              post.userId,
-              mentionedUser.uid,
-              post.id,
-              content.substring(0, 100) + (content.length > 100 ? '...' : '')
-            );
+            // await notificationService.createMentionNotification(
+            //   post.userId,
+            //   mentionedUser.uid,
+            //   post.id,
+            //   content.substring(0, 100) + (content.length > 100 ? '...' : '')
+            // );
+            console.log('Mention notification would be sent to:', mentionedUser.name);
           }
         } catch (error) {
           console.error('Error sending mention notification:', error);

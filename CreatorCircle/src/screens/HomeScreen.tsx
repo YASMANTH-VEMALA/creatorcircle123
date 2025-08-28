@@ -39,13 +39,26 @@ const HomeScreen: React.FC = () => {
   const loadPosts = useCallback(() => {
     console.log('📱 Loading posts...');
     
-    const unsubscribe = PostService.subscribeToPosts((loadedPosts) => {
-      console.log(`Posts loaded in HomeScreen: ${loadedPosts.length}`);
-      setPosts(loadedPosts);
-      setLoading(false);
-    });
+    try {
+      const unsubscribe = PostService.subscribeToPosts((loadedPosts) => {
+        try {
+          console.log(`Posts loaded in HomeScreen: ${loadedPosts.length}`);
+          setPosts(loadedPosts);
+          setLoading(false);
+        } catch (error) {
+          console.error('❌ Error processing loaded posts:', error);
+          setPosts([]);
+          setLoading(false);
+        }
+      });
 
-    return unsubscribe;
+      return unsubscribe;
+    } catch (error) {
+      console.error('❌ Error setting up posts subscription:', error);
+      setPosts([]);
+      setLoading(false);
+      return () => {};
+    }
   }, []);
 
   const startRealtimeMonitoring = () => {
@@ -54,6 +67,7 @@ const HomeScreen: React.FC = () => {
       RealtimeMigrationService.startMonitoring();
     } catch (error) {
       console.error('Error starting real-time monitoring:', error);
+      // Don't crash the app if monitoring fails
     }
   };
 
@@ -66,6 +80,7 @@ const HomeScreen: React.FC = () => {
       }
     } catch (error) {
       console.error('Firebase connection test failed:', error);
+      // Don't crash the app if Firebase test fails
     }
   };
 
@@ -74,7 +89,10 @@ const HomeScreen: React.FC = () => {
     setTimeout(() => setRefreshing(false), 1000);
   };
 
-  // Create post functionality removed - users can create posts from other screens
+  // Create post functionality moved to PostScreen
+  const handleCreatePost = () => {
+    navigation.navigate('Post' as never);
+  };
 
   const handlePostCreated = () => {
     console.log('Post created successfully');
@@ -84,12 +102,12 @@ const HomeScreen: React.FC = () => {
     console.log('Post updated successfully');
   };
 
-  const handleSearch = () => {
-    navigation.navigate('FindPeople' as never);
+  const handleSpotlight = () => {
+    navigation.navigate('Spotlight' as never);
   };
 
   const handleMessage = () => {
-    navigation.navigate('ChatList' as never);
+    navigation.navigate('MessagesList' as never);
   };
 
   const handleNotifications = () => {
@@ -148,8 +166,8 @@ const HomeScreen: React.FC = () => {
           </Text>
         </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerButton} onPress={handleSearch}>
-            <Ionicons name="search" size={24} color="#007AFF" />
+          <TouchableOpacity style={styles.headerButton} onPress={handleSpotlight}>
+            <Ionicons name="flash" size={24} color="#FF6B35" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerButton} onPress={handleMessage}>
             <Ionicons name="chatbubbles-outline" size={24} color="#007AFF" />
